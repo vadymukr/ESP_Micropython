@@ -15,6 +15,9 @@ HINTS = {
     'dht': 'Data to the pin; 10 k&Omega; pull-up to 3.3 V if the module has none. One reading per ~2 s.',
     'digital': 'Switch between the pin and GND with pull-up 1. Rain / float modules: use the DO output (3.3 V).',
     'flow': 'Signal to the pin (internal pull-up), sensor on 5 V. YF-S201 ~450 pulses per litre; litres count from the last restart.',
+    'yfs401': 'Red 5 V, black GND, yellow signal. The signal swings to 5 V: 10 k&Omega; in series to the pin and 15 k&Omega; from '
+              'the pin to GND (3.0 V). 0.3-6 L/min, F = 98 &times; Q &rarr; 5880 pulses per litre (fine-tune with a measuring '
+              'jug: litres counted / litres in the jug &times; 5880). Litres count from the last restart.',
     'i2c': 'Shared I2C bus with the air sensor: 3.3 V, SDA GPIO%d, SCL GPIO%d. The address is printed on the module or set with '
            'its jumpers and must not clash with another device.' % (S.I2C_SDA, S.I2C_SCL),
     'ina219': ' INA219 boards default to 0x40, the same as the Si7020 air sensor: bridge A0 for 0x41.',

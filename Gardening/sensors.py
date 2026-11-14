@@ -55,7 +55,8 @@ TYPES = {
     'digital': ('Digital input (float / rain / door switch)', 'io',
                 [('pull', 'Pull-up (1/0)', 'num', 1), ('invert', 'Invert (1/0)', 'num', 0), ('unit', 'Label', 'text', '')],
                 None, None),
-    'flow': ('Flow meter, pulses (YF-S201...)', 'io', [('ppl', 'Pulses per litre', 'num', 450)], None, None),
+    'flow': ('Flow meter YF-S201 / other, pulses', 'io', [('ppl', 'Pulses per litre', 'num', 450)], None, None),
+    'yfs401': ('Flow meter YF-S401, 0.3-6 L/min', 'io', [('ppl', 'Pulses per litre', 'num', 5880)], 'flow', None),
     'mhz19': ('MH-Z19 CO2, NDIR (UART)', 'uart', [], None, None),
     'pms': ('PM2.5 laser dust sensor: PMS5003/7003, SDS011 (UART)', 'uart', [], None, None),
     'aht': ('AHT10 / AHT20 temperature + humidity (I2C)', 'i2c', _I2C('38'), None, None),
@@ -137,6 +138,14 @@ def taken_pins(lst, skip_id=None):
             b = json.load(f)
         if b.get('on'):
             t[b['pin']] = 'battery'
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        with open(S.DATA_DIR + '/rgb.json') as f:
+            r = json.load(f)
+        if r.get('on'):
+            for p, c in zip(r['pins'], 'RGB'):
+                t[p] = 'RGB light ' + c
     except (OSError, ValueError, KeyError):
         pass
     for e in lst:

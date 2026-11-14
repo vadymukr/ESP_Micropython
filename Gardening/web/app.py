@@ -720,10 +720,12 @@ def frag_live():
                        % (k, batt.pin, lbl, batt.v, batt.low_v, batt.crit_v, batt.pin_v or 0))
     if pump:
         out.append('<div class="card band %s"><h3><span>Pump <small>GPIO%d</small></span><span class="badge">%s</span></h3>'
-                   '<p>%s</p><p class="muted">today %d of %d s</p></div>'
+                   '<p>%s</p><p class="muted">today %d of %d s%s</p></div>'
                    % ('dry' if pump.cfg['fault'] else 'wet' if pump.busy() else 'good', S.PUMP_PIN,
                       'Fault' if pump.cfg['fault'] else 'On' if pump.running else 'Ready',
-                      pump.state_text(), pump.cfg['day_s'], S.PUMP_DAY_MAX_S))
+                      pump.state_text(), pump.cfg['day_s'], S.PUMP_DAY_MAX_S,
+                      ' &middot; %.2f L &middot; total %.1f L' % (pump.cfg['l_day'], pump.cfg['l_total'])
+                      if pump.cfg['flow'] or pump.cfg['rate_lpm'] else ''))
     from bands import STAGES
     note = ' &middot; %s' % esc(b.msg) if b.msg and uptime() < 3600 else ''
     out.append('</div><p class="muted">Sampled %s &middot; <span x-text="age"></span> s ago &middot; stage: %s%s</p>'
@@ -837,7 +839,7 @@ STATIC = {
 }
 POLLS = ('/live', '/status', '/tail', '/files', '/wifi/state', '/favicon.ico', '/htmx.min.js', '/alpine.min.js')
 KNOWN = ('/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
-         '/pump', '/mqtt', '/batt', '/sensors')
+         '/pump', '/mqtt', '/batt', '/sensors', '/rgb')
 CAPTIVE = ('/generate_204', '/gen_204', '/hotspot-detect.html', '/library/test/success.html',
            '/ncsi.txt', '/connecttest.txt', '/redirect', '/success.txt', '/canonical.html')
 
@@ -870,9 +872,10 @@ async def route(w, method, path, q, f):
     if path == '/files':
         return await send(w, ui('ui_files', 'frag_files'))
     seg = path.split('/')[1]
-    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors'):
+    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb'):
         import sys
-        name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors'}.get(seg, 'ui_cfg')
+        name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors',
+                'rgb': 'ui_rgb'}.get(seg, 'ui_cfg')
         if path in ('/sensors/save', '/sensors/del', '/sensors/cap', '/sensors/cal'):
             name = 'ui_sensors_set'
         gc.collect()                           # settings panels: loaded per request, then released
@@ -992,7 +995,7 @@ async def handle(r, w):
 
 
 # ---------------------------------------------------------------- main
-sens = rec = net = bands = leds = batt = pwr = pump = mqtt = None
+sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = None
 
 
 def snapshot(avg, fields):
@@ -1032,7 +1035,9 @@ def snapshot(avg, fields):
     if pump and (allf or 'pump' in fields):
         c = pump.cfg
         d['pump'] = {'on': pump.running, 'busy': pump.busy(), 'mode': c['mode'], 'fault': c['fault'] or None,
-                     'today_s': c['day_s'], 'day_max_s': S.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty()}
+                     'today_s': c['day_s'], 'day_max_s': S.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty(),
+                     'runs_today': c['runs_day'], 'today_l': round(c['l_day'], 3), 'total_l': round(c['l_total'], 2),
+                     'flow_lpm': None if pump.lpm is None or not pump.running else round(pump.lpm, 2)}
     if batt and (allf or 'batt' in fields):
         d['battery'] = {'v': None if batt.v is None else round(batt.v, 2), 'state': batt.state}
     if allf or 'board' in fields:
@@ -1091,6 +1096,8 @@ async def sample_loop():
             if leds:
                 i = min(S.LED_SENSOR, len(pcts) - 1)
                 leds.show(bands.band(i, pcts[i]))
+            if rgb:
+                rgb.show([bands.band(i, p) for i, p in enumerate(pcts)], bool(pump and pump.cfg['fault']))
             if batt and uptime() >= batt_next:
                 batt_next = uptime() + S.BATT_EVERY_S
                 batt.read()
@@ -1109,6 +1116,8 @@ async def _main():
     asyncio.create_task(sample_loop())
     if leds:
         asyncio.create_task(leds.run())
+    if rgb:
+        asyncio.create_task(rgb.run())
     if pump:
         asyncio.create_task(pump.run())
     if pwr:
@@ -1123,6 +1132,8 @@ async def _main():
 
 
 def _before_sleep():
+    if rgb:
+        rgb.off()
     if pump:
         pump.stop('going to sleep')
         pump._set(False)
@@ -1153,6 +1164,28 @@ def batt_apply():
     return batt
 
 
+def rgb_apply(start_task=True):
+    """RGB status light from rgb.json: create, reconfigure or switch off (module loaded only once used)."""
+    global rgb
+    from rgb import Rgb, load_cfg
+    c = load_cfg()
+    if rgb:
+        rgb.reconfig(c)
+    elif c['on']:
+        rgb = Rgb(c)
+        if start_task:
+            asyncio.create_task(rgb.run())
+    return rgb
+
+
+def _rgb_enabled():
+    try:
+        with open(S.DATA_DIR + '/rgb.json') as f:
+            return bool(json.load(f).get('on'))
+    except (OSError, ValueError):
+        return False
+
+
 def leds_mode():
     """Saved LED mode (leds.json) without importing leds.py."""
     try:
@@ -1176,7 +1209,9 @@ def leds_start():
 
 def _optional():
     """Optional modules: not imported (no RAM) when not configured."""
-    global leds, batt, pump
+    global leds, batt, pump, rgb
+    if rgb is None and _rgb_enabled():
+        rgb_apply(False)                     # task started in _main (or flash_once in a quick wake)
     if getattr(S, 'PUMP_PIN', None) is not None and pump is None:
         from pump import Pump                # drives the pump pin OFF first thing
         pump = Pump(uptime, time_ok)
@@ -1199,6 +1234,7 @@ def main():
         _optional()
     if pump:
         pump.bands = bands
+        pump.sens = sens                     # flow sensor protection / water statistics
     rec = Recorder(sens)
     net = Net()
     gc.collect()

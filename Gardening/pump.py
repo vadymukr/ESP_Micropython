@@ -32,7 +32,12 @@ LOG_MAX = 8 * 1024             # pump.log is renamed to pump.old at this size
 MODES = ('manual', 'schedule', 'auto')
 DEFAULTS = {'mode': 'manual', 'man_s': 15, 'times': '06:30', 'sched_s': 20, 'skip_moist': True,
             'pulse_s': 15, 'soak_min': 10, 'max_pulses': 4, 'hours': '05:30-09:00', 'target': 3,
-            'sensors': [0], 'fault': '', 'day': '', 'day_s': 0, 'done': ''}
+            'sensors': [0], 'fault': '', 'day': '', 'day_s': 0, 'done': '',
+            # optional flow sensor protection + water statistics
+            'flow': '', 'flow_min': 0.2, 'flow_wait': 8, 'rate_lpm': 0.0,
+            'l_day': 0.0, 'l_total': 0.0, 'runs_day': 0, 'hist': []}
+FLOW_TYPES = ('flow', 'yfs401')
+HIST_DAYS = 14
 
 
 def _save(path, obj):
@@ -99,6 +104,12 @@ class Pump:
         self.last_min = -1
         self.on_event = None           # callback(text) for every log line (MQTT)
         self.hold = 0                  # auto: no new attempt before this uptime() (after a refusal)
+        self.sens = None               # set by the app: registry drivers (flow sensor)
+        self.fd = None                 # flow driver watched during the current run
+        self.n0 = 0                    # its pulse count at pump start
+        self.fq = []                   # recent (uptime, pulses) for the live flow rate
+        self.lpm = None                # live flow during the run, L/min
+        self.flow_used = False         # last run was judged by flow (not by moisture)
 
     # ---------------------------------------------------------------- config / state
     def save(self, **kw):
@@ -139,12 +150,28 @@ class Pump:
         return self.running or self.check_end is not None
 
     def _day(self):
-        """Reset the daily total at local midnight (needs the clock; else counts since boot)."""
+        """New local day: yesterday goes into the history, daily totals restart (needs the clock)."""
+        c = self.cfg
         if self.time_ok():
             d = _stamp()[:10]
-            if d != self.cfg['day']:
-                self.cfg['day'], self.cfg['day_s'], self.cfg['done'] = d, 0, ''
-        return S.PUMP_DAY_MAX_S - self.cfg['day_s']
+            if d != c['day']:
+                if c['day'] and (c['day_s'] or c['l_day']):
+                    c['hist'] = (c['hist'] + [[c['day'], round(c['l_day'], 3), c['day_s'], c['runs_day']]])[-HIST_DAYS:]
+                c['day'], c['day_s'], c['done'], c['l_day'], c['runs_day'] = d, 0, '', 0.0, 0
+        return S.PUMP_DAY_MAX_S - c['day_s']
+
+    def flow_drv(self):
+        """The linked flow sensor's driver, or None (not linked / not running)."""
+        fid = self.cfg['flow']
+        if not fid or not self.sens:
+            return None
+        for d in self.sens.gen:
+            if d.e['id'] == fid and hasattr(d, 'n'):
+                return d
+        return None
+
+    def _litres(self, d, n):
+        return n / (float(d.e.get('ppl', 450)) or 450.0)
 
     # ---------------------------------------------------------------- switching
     def _set(self, on):
@@ -172,6 +199,14 @@ class Pump:
         self.run_t0 = self.up()
         self.run_end = self.run_t0 + secs
         self.check_end = None
+        self.fd = self.flow_drv()
+        if self.cfg['flow'] and not self.fd:
+            self.log('flow sensor %s not running - using the moisture check' % self.cfg['flow'])
+        if self.fd:
+            self.n0 = self.fd.n
+            self.fq = [(self.run_t0, self.n0)]
+        self.lpm = None
+        self.cfg['runs_day'] += 1
         self._set(True)
         self.log('ON %d s (%s) | %s' % (secs, why, self._vals()))
         return ''
@@ -183,11 +218,26 @@ class Pump:
         self._set(False)
         self.running = False
         ran = max(0, self.up() - self.run_t0)
-        self.cfg['day_s'] += ran
+        c = self.cfg
+        c['day_s'] += ran
+        d, lit, how = self.fd, None, ''
+        if d:                                     # measured
+            lit, how = self._litres(d, d.n - self.n0), 'measured'
+        elif c['rate_lpm'] > 0:                   # estimated from the pump rate
+            lit, how = ran * c['rate_lpm'] / 60, 'estimated'
+        if lit is not None:
+            c['l_day'] += lit
+            c['l_total'] += lit
+        self.flow_used = d is not None
+        if d and c['fault'] and note != 'no flow' and lit >= 0.02:
+            c['fault'] = ''                       # water flows again: lock cleared
+            self.log('water flowed - dry-run lock cleared')
+        self.fd = None
         self.save()
         self.check_len = ran
-        self.check_end = self.up() + max(1, self.cfg['soak_min']) * 60
-        self.log('OFF after %d s (%s) - watching moisture for %d min' % (ran, note, self.cfg['soak_min']))
+        self.check_end = self.up() + max(1, c['soak_min']) * 60
+        self.log('OFF after %d s (%s)%s - watching moisture for %d min'
+                 % (ran, note, '' if lit is None else ', %.3f L %s' % (lit, how), c['soak_min']))
 
     def reset_fault(self):
         self.save(fault='')
@@ -218,6 +268,9 @@ class Pump:
         self.check_end = None
         rise = max(p - b for p, b in zip(self.peak, self.base)) if self.base else 0
         self.base = self.peak = None
+        if self.flow_used:                        # flow sensor judged the run: moisture is information only
+            self.log('moisture after watering: %+.1f points | %s' % (rise, self._vals()))
+            return not self.cfg['fault']
         if self.rose:
             if self.cfg['fault']:
                 self.save(fault='')
@@ -254,12 +307,16 @@ class Pump:
     # ---------------------------------------------------------------- loop (1 s)
     def _tick(self):
         now = self.up()
+        if now % 60 == 0:
+            self._day()                           # midnight rollover also on days without a run
         if self.running:
             if self.tank_empty():
                 self.stop('tank float switch EMPTY')
                 self.save(fault='tank float switch reads empty')
             elif now >= self.run_end:
                 self.stop()
+            elif self.fd:
+                self._flow_check(now)
             return
         if self.check_end is not None:
             if self.rose and self.why != 'auto':
@@ -296,6 +353,23 @@ class Pump:
                 self.pulses = 0
                 self._auto_next()
 
+    def _flow_check(self, now):
+        """Live flow rate over the last ~3 s; no flow after the grace time = stop and lock."""
+        d, c = self.fd, self.cfg
+        self.fq.append((now, d.n))
+        while len(self.fq) > 2 and now - self.fq[0][0] > 3:
+            self.fq.pop(0)
+        dt = self.fq[-1][0] - self.fq[0][0]
+        if dt > 0:
+            self.lpm = self._litres(d, self.fq[-1][1] - self.fq[0][1]) * 60 / dt
+        if now - self.run_t0 >= c['flow_wait'] and self.lpm is not None and self.lpm < c['flow_min']:
+            f = ('no water flow (%.2f L/min) after %d s of pumping: tank empty, pipe blocked or pump failed?'
+                 % (self.lpm, now - self.run_t0))
+            self.stop('no flow')
+            self.save(fault=f)
+            self.pulses = 0
+            self.log('DRY RUN: ' + f)
+
     def _auto_next(self):
         low, full = self._need()
         if full:
@@ -328,7 +402,11 @@ class Pump:
     # ---------------------------------------------------------------- status for the page
     def state_text(self):
         if self.running:
-            return 'running (%s) &middot; off in %d s' % (self.why, max(0, self.run_end - self.up()))
+            fl = ''
+            if self.fd:
+                fl = ' &middot; %s L/min &middot; %.3f L' % ('&ndash;' if self.lpm is None else '%.2f' % self.lpm,
+                                                            self._litres(self.fd, self.fd.n - self.n0))
+            return 'running (%s) &middot; off in %d s%s' % (self.why, max(0, self.run_end - self.up()), fl)
         if self.check_end is not None:
             rise = max(p - b for p, b in zip(self.peak, self.base)) if self.base else 0
             return 'watching moisture &middot; +%.1f points &middot; %d s left' % (rise, max(0, self.check_end - self.up()))

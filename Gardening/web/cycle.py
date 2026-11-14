@@ -48,6 +48,9 @@ def quick():
         if leds:
             i = min(S.LED_SENSOR, len(pcts) - 1)
             leds.flash_once(b.band(i, pcts[i]), low)
+        if app.rgb:
+            app.rgb.show([b.band(i, p) for i, p in enumerate(pcts)])
+            app.rgb.flash_once(app.rgb.state)
         print('quick: %s | rec %s' % (' '.join('%.0f%%' % p for p in pcts), r.fname if r.resume else '-'))
         pwr.deepsleep(pwr.sleep_secs(low, quick=True))
     except Exception as e:

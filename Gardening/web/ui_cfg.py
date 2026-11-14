@@ -148,6 +148,9 @@ def handle(method, path, f):
         m = f.get('mode')
         if not S.LED_PINS or m not in MODES:
             return (frag_leds('Invalid mode.'))
+        r = app.rgb
+        if m != 'off' and r and r.pwm and any(p in S.LED_PINS for p in r.c['pins']):
+            return (frag_leds('The RGB status light uses these pins - switch it off or move it first.'))
         if app.leds:
             app.leds.set_mode(m)                  # off: stays loaded until the next restart
         elif m != 'off':

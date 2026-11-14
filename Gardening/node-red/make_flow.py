@@ -80,7 +80,9 @@ const p = d.pump;
 const pump = !p ? 'not sent' :
     (p.fault ? '⚠ LOCKED: ' + p.fault :
      (p.on ? 'RUNNING' : (p.busy ? 'watching moisture' : 'ready')) +
-     ` · mode ${p.mode} · today ${p.today_s} / ${p.day_max_s} s` + (p.tank_empty ? ' · TANK EMPTY' : ''));
+     ` · mode ${p.mode} · today ${p.today_s} / ${p.day_max_s} s` +
+     (p.today_l ? ` · ${p.today_l} L today, ${p.total_l} L total` : '') +
+     (p.flow_lpm != null ? ` · ${p.flow_lpm} L/min` : '') + (p.tank_empty ? ' · TANK EMPTY' : ''));
 const board = `${d.time || 'clock not set'} · ${d.samples} samples averaged` +
     (d.wifi_rssi != null ? ` · WiFi ${d.wifi_rssi} dBm` : '') +
     (d.heap_free != null ? ` · heap ${Math.round(d.heap_free / 1024)} KB` : '') +

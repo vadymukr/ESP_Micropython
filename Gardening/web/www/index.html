@@ -111,6 +111,7 @@ function app(){return{
     <summary>Watering bands &ndash; settings</summary>
     <div id="bands"><p class="muted">Loading&hellip;</p></div>
     <div id="leds" hx-get="/leds" hx-trigger="htmx:after:swap from:#bands once"></div>
+    <div id="rgb" hx-get="/rgb" hx-trigger="htmx:after:swap from:#leds once"></div>
   </details>
 </section>
 

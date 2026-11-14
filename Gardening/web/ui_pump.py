@@ -22,7 +22,7 @@ def frag_pump(msg='', ok=False):
     p = app.pump
     if not p:
         return '<p class="muted">No pump configured (PUMP_PIN in settings.py).</p>'
-    from pump import MODES
+    from pump import MODES, FLOW_TYPES
     c = p.cfg
     sel = lambda a, b: ' selected' if a == b else ''
     out = ['<p><b>Pump (GPIO %d): %s</b> &middot; today %d of %d s</p>' % (S.PUMP_PIN, p.state_text(), c['day_s'], S.PUMP_DAY_MAX_S)]
@@ -61,18 +61,52 @@ def frag_pump(msg='', ok=False):
     for i, ch in enumerate(app.sens.ch):
         out.append('<label class="row" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" '
                    'name="s%d" value="1"%s> %s</label>' % (i, ' checked' if i in c['sensors'] else '', esc(ch[4])))
+    flows = [d for d in app.sens.gen if d.e['type'] in FLOW_TYPES]
+    out.append('<span style="flex-basis:100%%;font-size:13px;color:var(--muted)">Dry-run protection by a flow sensor (optional):</span>'
+               '<label>Flow sensor<select name="flow"><option value="">none &ndash; use the moisture check</option>')
+    for d in flows:
+        out.append('<option value="%s"%s>%s (%s)</option>' % (d.e['id'], ' selected' if c['flow'] == d.e['id'] else '',
+                                                               esc(d.e['name']), d.e['id']))
+    out.append('</select></label><label>Min flow, L/min<input name="flow_min" type="number" step="0.01" min="0.01" max="20" '
+               'value="%s" style="width:6em"></label><label>Grace time, s<input name="flow_wait" type="number" min="2" max="60" '
+               'value="%d" style="width:5em"></label><label>Pump rate estimate, L/min (no flow sensor)<input name="rate_lpm" '
+               'type="number" step="0.01" min="0" max="100" value="%s" style="width:6em"></label>'
+               % (c['flow_min'], c['flow_wait'], c['rate_lpm']))
     out.append('<button>Save</button></form>')
     out.append('<p class="muted">Every run switches off by itself (max %d s, %d s per day). After each run the ticked '
                'sensors are watched; no rise of %.0f points = tank empty / pipe blocked: timer and auto are locked and an '
                'alert is shown. Tick the sensor(s) the water reaches. Auto waters in pulses when a sensor drops to the '
                '&ldquo;water&rdquo; level (F&minus;w) and stops near F. In sleep-cycle mode it only works while awake '
-               '(add awake windows around the times).</p>' % (S.PUMP_MAX_S, S.PUMP_DAY_MAX_S, S.PUMP_RISE))
+               '(add awake windows around the times). With a flow sensor linked, the pump stops and locks at once when '
+               'the flow stays under the minimum after the grace time or stops during a run (tank ran dry); the moisture '
+               'rise is then only logged.%s</p>' % (S.PUMP_MAX_S, S.PUMP_DAY_MAX_S, S.PUMP_RISE,
+               '' if flows else ' Add a flow sensor (YF-S401, YF-S201) in the Sensors panel to use it.'))
+    out += _stats(p)
     log = _log_tail()
     if log:
         out.append('<p class="muted"><b>Log</b> <button class="small" type="button" hx-get="/pump" hx-target="#pump">Refresh'
                    '</button></p><pre style="font-size:12px;white-space:pre-wrap;margin:4px 0 0">%s</pre>'
                    % esc('\n'.join(reversed(log))))
-    return ''.join(out)
+    return out
+
+
+def _stats(p):
+    """Water statistics: today, total, last 14 days."""
+    c = p.cfg
+    lit = bool(c['flow'] or c['rate_lpm'] or c['l_total'])
+    how = 'measured by the flow sensor' if c['flow'] else 'estimated from the pump rate' if c['rate_lpm'] else ''
+    out = ['<p><b>Water used</b> <small>%s</small><br>Today: %d run(s), %d s%s%s</p>'
+           % (how, c['runs_day'], c['day_s'], ', %.2f L' % c['l_day'] if lit else '',
+              ' &middot; total %.1f L' % c['l_total'] if lit else '')]
+    if c['hist']:
+        out.append('<table><tr><th>Day</th><th>Runs</th><th>Pump s</th>%s</tr>' % ('<th>Litres</th>' if lit else ''))
+        for day, l, sec, runs in reversed(c['hist']):
+            out.append('<tr><td>%s</td><td>%d</td><td>%d</td>%s</tr>' % (day, runs, sec, '<td>%.2f</td>' % l if lit else ''))
+        out.append('</table>')
+    out.append('<p><span x-data="{c:0}"><button class="small" x-show="!c" @click="c=1">Reset statistics</button>'
+               '<span x-show="c">Clear the history and total? <button class="small danger" hx-post="/pump/statreset" '
+               'hx-target="#pump">Yes</button> <button class="small" @click="c=0">No</button></span></span></p>')
+    return out
 
 
 def pump_post(path, f):
@@ -96,11 +130,21 @@ def pump_post(path, f):
     if path == '/pump/reset':
         p.reset_fault()
         return frag_pump('Lock cleared.', True)
+    if path == '/pump/statreset':
+        p.save(hist=[], l_total=0.0, l_day=0.0, runs_day=0)
+        p.log('statistics reset by user')
+        return frag_pump('Statistics cleared.', True)
     if path == '/pump/save':
         try:
             mode = f.get('mode')
             kw = {'mode': mode, 'soak_min': int(f.get('soak_min', p.cfg['soak_min'])),
-                  'sensors': [i for i in range(len(app.sens.ch)) if f.get('s%d' % i) == '1']}
+                  'sensors': [i for i in range(len(app.sens.ch)) if f.get('s%d' % i) == '1'],
+                  'flow': f.get('flow', ''), 'flow_min': float(f.get('flow_min', 0.2)),
+                  'flow_wait': int(f.get('flow_wait', 8)), 'rate_lpm': float(f.get('rate_lpm', 0) or 0)}
+            if kw['flow'] and kw['flow'] not in [d.e['id'] for d in app.sens.gen if d.e['type'] in ('flow', 'yfs401')]:
+                return frag_pump('Choose a running flow sensor.')
+            if not (0.01 <= kw['flow_min'] <= 20 and 2 <= kw['flow_wait'] <= 60 and 0 <= kw['rate_lpm'] <= 100):
+                return frag_pump('Flow settings out of range.')
             if mode == 'schedule':
                 kw['times'] = f.get('times', '').strip()[:60]
                 kw['sched_s'] = int(f.get('sched_s', p.cfg['sched_s']))
@@ -127,7 +171,7 @@ def pump_post(path, f):
         if mode != 'schedule':
             kw['done'] = ''
         p.save(**kw)
-        p.log('settings: mode %s' % mode)
+        p.log('settings: mode %s%s' % (mode, ', flow protection %s' % kw['flow'] if kw['flow'] else ''))
         return frag_pump('Saved.', True)
     return None
 
