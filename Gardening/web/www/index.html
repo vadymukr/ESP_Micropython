@@ -49,6 +49,7 @@ code{font-size:13px}
 h3{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .wet{--c:var(--b-wet)}.drain{--c:var(--b-drain)}.good{--c:var(--b-good)}.soon{--c:var(--b-soon)}.now{--c:var(--b-now)}.dry{--c:var(--b-dry)}
 .card.band{border-left:4px solid var(--c)}
+.sig{display:inline-flex;gap:2px;align-items:flex-end;height:22px;margin-right:4px}.sig i{width:5px;border-radius:1px;background:var(--line)}.sig i.on{background:var(--acc)}
 .badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;color:#fff;white-space:nowrap;background:var(--c)}
 .scale{position:relative;height:12px;margin:12px 0 18px;display:flex}
 .scale i{display:block;height:100%;background:var(--c)}
@@ -133,6 +134,13 @@ function app(){return{
   <details hx-get="/batt" hx-trigger="toggle once" hx-target="#batt">
     <summary>Battery / supply monitor</summary>
     <div id="batt"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/gsm" hx-trigger="toggle once" hx-target="#gsm">
+    <summary>GSM &ndash; SMS and GPRS</summary>
+    <div id="gsm"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 

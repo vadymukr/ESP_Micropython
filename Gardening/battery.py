@@ -25,7 +25,7 @@ from machine import ADC, Pin
 import settings as S
 
 CFG = S.DATA_DIR + '/batt.json'
-PINS = (32, 33, 36, 39)                         # ADC1, not used by the soil sensors
+PINS = tuple(p for p in getattr(S, 'ADC_PINS', (32, 33, 36, 39)) if p not in (34, 35) or getattr(S, 'CHIP', 'esp32') != 'esp32')
 PRESETS = {'5': (5.5, 100, 68, 4.6, 4.4), '12': (15.0, 100, 15, 11.8, 11.4)}   # vmax, R1 k, R2 k, low, crit
 E12 = (10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82, 100)
 PIN_OK_V = 2.45                                 # accurate ADC range (11 dB)

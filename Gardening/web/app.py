@@ -153,7 +153,7 @@ class Sensors:
         self._backoff = S.AIR_RETRY_S[0]
         self._next_try = 0                   # uptime() of the next detect attempt
         self._clim_init()                    # also creates the shared I2C bus (self.i2c)
-        self.uart_free = [1, 2]              # UART ids for UART sensors (0 = USB console)
+        self.uart_free = list(getattr(S, 'UART_IDS', (1, 2)))   # UART ids for UART sensors (chip / board)
         for e in self.reg:                   # other sensors: drivers get this object as ctx (ctx.i2c)
             if e['type'] == 'soil':
                 continue
@@ -178,7 +178,10 @@ class Sensors:
     def _soil(e):
         a = ADC(Pin(e['pin']))
         a.atten(ADC.ATTN_11DB)
-        a.width(ADC.WIDTH_12BIT)
+        try:
+            a.width(ADC.WIDTH_12BIT)         # classic ESP32; S3 / C3 / C6 are 12-bit already
+        except AttributeError:
+            pass
         return (e['pin'], a, e['dry'], e['wet'], e['name'], e['id'])
 
     def _bus_reset(self):
@@ -726,6 +729,8 @@ def frag_live():
                       pump.state_text(), pump.cfg['day_s'], S.PUMP_DAY_MAX_S,
                       ' &middot; %.2f L &middot; total %.1f L' % (pump.cfg['l_day'], pump.cfg['l_total'])
                       if pump.cfg['flow'] or pump.cfg['rate_lpm'] else ''))
+    if gsm:
+        out.append(gsm.card())
     from bands import STAGES
     note = ' &middot; %s' % esc(b.msg) if b.msg and uptime() < 3600 else ''
     out.append('</div><p class="muted">Sampled %s &middot; <span x-text="age"></span> s ago &middot; stage: %s%s</p>'
@@ -775,7 +780,8 @@ def frag_status(msg=''):
                % (wifi, inet, stamp() if time_ok() else 'not set', S.TZ_LABEL, clock_src,
                   kb(gc.mem_free()), kb(heap_min), kb(flash_free()), dur(uptime()),
                   ('<dt>Power</dt><dd>%s</dd>' % ' &middot; '.join(pwr.status()) if pwr else '') +
-                  '<dt>MQTT</dt><dd>%s</dd>' % (esc(mqtt.status()) if mqtt else 'off')))
+                  '<dt>MQTT</dt><dd>%s</dd>' % (esc(mqtt.status()) if mqtt else 'off') +
+                  ('<dt>GSM</dt><dd>%s</dd>' % gsm.status() if gsm else '')))
     return ''.join(out)
 
 
@@ -839,7 +845,7 @@ STATIC = {
 }
 POLLS = ('/live', '/status', '/tail', '/files', '/wifi/state', '/favicon.ico', '/htmx.min.js', '/alpine.min.js')
 KNOWN = ('/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
-         '/pump', '/mqtt', '/batt', '/sensors', '/rgb')
+         '/pump', '/mqtt', '/batt', '/sensors', '/rgb', '/gsm')
 CAPTIVE = ('/generate_204', '/gen_204', '/hotspot-detect.html', '/library/test/success.html',
            '/ncsi.txt', '/connecttest.txt', '/redirect', '/success.txt', '/canonical.html')
 
@@ -872,10 +878,10 @@ async def route(w, method, path, q, f):
     if path == '/files':
         return await send(w, ui('ui_files', 'frag_files'))
     seg = path.split('/')[1]
-    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb'):
+    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb', 'gsm'):
         import sys
         name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors',
-                'rgb': 'ui_rgb'}.get(seg, 'ui_cfg')
+                'rgb': 'ui_rgb', 'gsm': 'ui_gsm'}.get(seg, 'ui_cfg')
         if path in ('/sensors/save', '/sensors/del', '/sensors/cap', '/sensors/cal'):
             name = 'ui_sensors_set'
         gc.collect()                           # settings panels: loaded per request, then released
@@ -885,6 +891,11 @@ async def route(w, method, path, q, f):
         finally:
             mod = None
             del sys.modules[name]
+            # helper modules a panel imported only for its settings (gsm.py ~14 KB): released
+            # again while their feature is off (module name -> global holding the running object)
+            for m, o in (('gsm', 'gsm'), ('rgb', 'rgb'), ('mqtt', 'mqtt'), ('battery', 'batt'), ('leds', 'leds')):
+                if m in sys.modules and globals()[o] is None:
+                    del sys.modules[m]
         if html is not None:
             return await send(w, html)
     if path == '/dl':
@@ -995,57 +1006,7 @@ async def handle(r, w):
 
 
 # ---------------------------------------------------------------- main
-sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = None
-
-
-def snapshot(avg, fields):
-    """The selected values as a dict, for MQTT <base>/state. avg = mqtt.avg(): soil raw / air averaged over
-    all samples since the previous publish (falls back to the latest reading if there are none).
-    fields: 's0', 's1'.. (soil sensors), 'air', 'pump', 'batt', 'board'. An unselected soil sensor is
-    sent as null so the others keep their position in the list."""
-    from bands import BANDS
-    raws, t, rh, hpa, n, gv = avg
-    if raws is None:
-        raws, t, rh, hpa, n, gv = list(sens.raw), sens.t, sens.rh, sens.p, 1, list(sens.gval)
-    allf = not fields                        # empty selection = everything
-    d = {'time': stamp() if time_ok() else None, 'samples': n}
-    ss = []
-    for i, c in enumerate(sens.ch):
-        if not allf and 'sen_' + c[5] not in fields:
-            ss.append(None)
-            continue
-        p = sens.pct(raws[i], c[2], c[3])
-        k = bands.band(i, p)
-        ss.append({'id': c[5], 'name': c[4], 'gpio': c[0], 'raw': round(raws[i], 1), 'pct': round(p, 1), 'band': k,
-                   'band_text': BANDS[k], 'full_F': bands.full[i], 'water_at': bands.full[i] - bands.w(),
-                   'dry_rate_pts_day': round(bands.rate[i] * 24, 1), 'rate_measured': bands.rate_ok[i]})
-    if any(ss):
-        d['soil'] = ss
-    gs = {}
-    for j, g in enumerate(sens.gch):
-        if allf or 'sen_' + g[6] in fields:
-            v = gv[j] if j < len(gv) else None
-            key = g[6] if len([x for x in sens.gch if x[6] == g[6]]) == 1 else g[6] + '.' + g[2]
-            gs[key] = {'name': g[3], 'value': None if v is None else round(v, g[5]), 'unit': g[4]}
-    if gs:
-        d['sensors'] = gs
-    if allf or 'air' in fields:
-        d['air'] = {'temp_c': None if t is None else round(t, 2), 'rh_pct': None if rh is None else round(rh, 1),
-                    'hpa': None if hpa is None else round(hpa, 1), 'sensor': sens.clim_name if sens.clim else None}
-    if pump and (allf or 'pump' in fields):
-        c = pump.cfg
-        d['pump'] = {'on': pump.running, 'busy': pump.busy(), 'mode': c['mode'], 'fault': c['fault'] or None,
-                     'today_s': c['day_s'], 'day_max_s': S.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty(),
-                     'runs_today': c['runs_day'], 'today_l': round(c['l_day'], 3), 'total_l': round(c['l_total'], 2),
-                     'flow_lpm': None if pump.lpm is None or not pump.running else round(pump.lpm, 2)}
-    if batt and (allf or 'batt' in fields):
-        d['battery'] = {'v': None if batt.v is None else round(batt.v, 2), 'state': batt.state}
-    if allf or 'board' in fields:
-        d['uptime_s'] = uptime()
-        d['recording'] = rec.fname if rec.active else None
-        d['wifi_rssi'] = net.sta.status('rssi') if net.sta.isconnected() else None
-        d['heap_free'] = gc.mem_free()
-    return d
+sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = gsm = None
 
 
 def restart_soon(secs=2):
@@ -1061,16 +1022,43 @@ def restart_soon(secs=2):
     asyncio.create_task(_go())
 
 
+def gsm_start():
+    """Start the modem task (boot, or enabled from the page)."""
+    global gsm
+    if gsm is None and getattr(S, 'MODEM_TX', None) is not None:
+        from gsm import Gsm, load_cfg, sms_command
+        gsm = Gsm(load_cfg(), sens)
+        asyncio.create_task(gsm.run(sms_command))
+        if mqtt:
+            mqtt.gprs = gsm
+    return gsm
+
+
+def _online():
+    """Internet for MQTT: WiFi, or GPRS when the GSM panel allows it."""
+    w = net.sta.isconnected()
+    return w or (gsm is not None and gsm.use_gprs(w))
+
+
 def mqtt_start():
     """Start the MQTT task (boot, or enabled from the page). Module not loaded while MQTT is off."""
     global mqtt
     if mqtt is None:
         from mqtt import Mqtt
         mqtt = Mqtt(uptime)
+        mqtt.gprs, mqtt.wifi = gsm, net.sta.isconnected
         if pump:
             pump.on_event = mqtt.event
-        asyncio.create_task(mqtt.run(snapshot, net.sta.isconnected))
+        asyncio.create_task(mqtt.run(None, _online))      # mqtt.snapshot() builds the JSON
     return mqtt
+
+
+def _gsm_enabled():
+    try:
+        with open(S.DATA_DIR + '/gsm.json') as f:
+            return bool(json.load(f).get('on'))
+    except (OSError, ValueError):
+        return False
 
 
 def _mqtt_enabled():
@@ -1093,6 +1081,8 @@ async def sample_loop():
                 pump.update(pcts)
             if mqtt:
                 mqtt.feed(sens.raw, sens.t, sens.rh, sens.p, sens.gval)
+            if gsm and gsm.net and uptime() % 30 < S.SAMPLE_S:
+                gsm.check(pcts)
             if leds:
                 i = min(S.LED_SENSOR, len(pcts) - 1)
                 leds.show(bands.band(i, pcts[i]))
@@ -1125,6 +1115,8 @@ async def _main():
                                     _before_sleep, lambda: batt is not None and batt.state != 'ok'))
     if _mqtt_enabled():
         mqtt_start()
+    if _gsm_enabled():
+        gsm_start()
     await asyncio.start_server(handle, '0.0.0.0', S.HTTP_PORT, backlog=5)
     print('http: listening on port', S.HTTP_PORT, '- free heap', gc.mem_free())
     while True:

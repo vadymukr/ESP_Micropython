@@ -18,8 +18,9 @@ import os
 import settings as S
 
 CFG = S.DATA_DIR + '/sensors.json'
-ADC_PINS = (32, 33, 34, 35, 36, 39)            # ADC1: works with WiFi on (ADC2 does not)
-IO_PINS = (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)   # free of boot straps / flash
+# Pin tables come from the chip profile in settings.py (classic ESP32 values as fallback)
+ADC_PINS = getattr(S, 'ADC_PINS', (32, 33, 34, 35, 36, 39))     # ADC1: works with WiFi on (ADC2 does not)
+IO_PINS = getattr(S, 'IO_PINS', (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33))
 
 # type -> (label, pin kind, form fields [(key, label, 'num'|'text', default)], driver, calibrate button)
 #   pin kinds: 'adc' = ADC1 pin, 'io' = free GPIO, 'i2c' = shared I2C bus (address field),
@@ -129,7 +130,8 @@ def taken_pins(lst, skip_id=None):
     for p in S.SENSOR_PWR_PINS:
         t[p] = 'sensor power'
     for k, lbl in (('PUMP_PIN', 'pump'), ('TANK_PIN', 'tank switch'), ('WAKE_TOUCH', 'touch wake'),
-                   ('WAKE_BUTTON', 'wake button')):
+                   ('WAKE_BUTTON', 'wake button'), ('MODEM_TX', 'modem TX'), ('MODEM_RX', 'modem RX'),
+                   ('MODEM_PWKEY', 'modem PWKEY'), ('MODEM_RST', 'modem RST'), ('MODEM_POWER', 'modem power')):
         p = getattr(S, k, None)
         if p is not None:
             t[p] = lbl

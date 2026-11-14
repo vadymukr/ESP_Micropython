@@ -29,12 +29,11 @@ import settings as S
 CFG = S.DATA_DIR + '/power.json'
 DEFAULTS = {'cpu': 160, 'sensor_pwr': False, 'mode': 'always', 'every': 10, 'stay': 10,
             'windows': '', 'lowbatt_every': 30, 'maint_until': 0, 'ntp_at': 0}
-CPUS = (80, 160, 240)
-WAKE_NAMES = {machine.PIN_WAKE: 'button', machine.EXT0_WAKE: 'button', machine.TIMER_WAKE: 'timer'}
-try:
-    WAKE_NAMES[machine.TOUCHPAD_WAKE] = 'touch'
-except AttributeError:
-    pass
+CPUS = getattr(S, 'CPUS', (80, 160, 240))       # C3 / C6: 80, 160 only
+WAKE_NAMES = {}
+for _k, _v in (('PIN_WAKE', 'button'), ('EXT0_WAKE', 'button'), ('TIMER_WAKE', 'timer'), ('TOUCHPAD_WAKE', 'touch')):
+    if hasattr(machine, _k):                      # not every chip has every wake source
+        WAKE_NAMES[getattr(machine, _k)] = _v
 
 
 def local_min(t):
@@ -90,7 +89,10 @@ class Power:
     def apply_cpu(self):
         mhz = self.cfg['cpu'] if self.cfg['cpu'] in CPUS else 160
         if machine.freq() != mhz * 1000000:
-            machine.freq(mhz * 1000000)
+            try:
+                machine.freq(mhz * 1000000)
+            except ValueError:
+                pass
 
     # ---------------------------------------------------------------- sensor power
     def sensor_switching(self):
@@ -191,7 +193,10 @@ class Power:
         import esp32
         self.sensors(False)
         if S.WAKE_BUTTON is not None:
-            esp32.wake_on_ext0(pin=Pin(S.WAKE_BUTTON, Pin.IN, Pin.PULL_UP), level=esp32.WAKEUP_ALL_LOW)
+            try:
+                esp32.wake_on_ext0(pin=Pin(S.WAKE_BUTTON, Pin.IN, Pin.PULL_UP), level=esp32.WAKEUP_ALL_LOW)
+            except (AttributeError, ValueError, OSError):
+                print('power: button wake n/a on this chip (timer wake only)')
         if S.WAKE_TOUCH is not None:
             try:
                 t = machine.TouchPad(Pin(S.WAKE_TOUCH))

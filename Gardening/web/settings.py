@@ -98,3 +98,62 @@ WAKE_TOUCH = None             # touch-capable GPIO (e.g. 13 or 32) to wake by to
 MAX_AWAKE_MIN = 60            # page use keeps it awake at most this long after a wake (then sleeps)
 MAINT_MAX_H = 2               # "stay awake (maintenance)" button duration
 CYCLE_SAMPLES = 8             # readings averaged per sleep-cycle wake (~2 s)
+
+# GSM modem (gsm.py, SIM800L): SMS alerts + commands, MQTT over GPRS. Set up from the dashboard GSM
+# panel (/data/gsm.json); here only the wiring. None = no modem (module not loaded). The TTGO T-Call
+# profile below sets these automatically; for a separate SIM800L module set them by hand
+# (SIM800L needs 3.7-4.2 V / 2 A peaks - a Li-ion cell or a buck converter, not the 3.3 V pin).
+MODEM_TX = None               # ESP32 TX -> modem RX
+MODEM_RX = None               # ESP32 RX <- modem TX
+MODEM_PWKEY = None            # power key (pulsed low to switch the modem on); None = not wired
+MODEM_RST = None              # reset (held high); None = not wired
+MODEM_POWER = None            # GPIO that switches the modem supply on (T-Call); None = always powered
+MODEM_UART = 2
+MODEM_BAUD = 115200
+MODEM_IP5306 = False          # T-Call: tell the IP5306 charger chip (I2C 0x75) to keep its boost on
+
+# ---------------------------------------------------------------- chip / board profile
+# CHIP is detected from the firmware; BOARD picks a ready-made wiring. The lines below override the
+# defaults above for other chips / boards - edit them for your own wiring. ADC1 pins work with WiFi on.
+import os as _os
+_m = _os.uname().machine.upper()
+CHIP = 'esp32c3' if 'C3' in _m else 'esp32s3' if 'S3' in _m else 'esp32c6' if 'C6' in _m else 'esp32'
+BOARD = 'devkit'              # 'devkit' = plain board | 'ttgo-tcall' = TTGO T-Call V1.4 (ESP32 + SIM800L)
+
+if CHIP == 'esp32':           # classic ESP32 (WROOM / WROVER)
+    ADC_PINS = (32, 33, 34, 35, 36, 39)
+    IO_PINS = (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)
+    UART_IDS = (1, 2)         # free UARTs for UART sensors (0 = USB console)
+    CPUS = (80, 160, 240)
+elif CHIP == 'esp32s3':       # 19/20 = native USB, 26-37 = flash / PSRAM, 0/3/45/46 = strapping
+    ADC_PINS = (1, 2, 4, 5, 6, 7, 8, 9, 10)
+    IO_PINS = (1, 2, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 47, 48)
+    UART_IDS = (1, 2)
+    CPUS = (80, 160, 240)
+    I2C_SDA, I2C_SCL = 8, 9
+    SENSORS = ((1, 3416, 1651, 'Sensor A'), (2, 3416, 1651, 'Sensor B'))   # recalibrate: other ADC
+    PUMP_PIN, LED_PINS, WAKE_BUTTON = 21, (38, 39, 40, 41), 0
+    BATT_PIN = None
+elif CHIP == 'esp32c3':       # 2/8/9 = strapping, 11-17 = flash, 18/19 = USB, 20/21 = console UART
+    ADC_PINS = (0, 1, 3, 4)   # GPIO2 is ADC1 too but a strapping pin
+    IO_PINS = (0, 1, 3, 4, 5, 6, 7, 10)
+    UART_IDS = (1,)
+    CPUS = (80, 160)
+    I2C_SDA, I2C_SCL = 8, 9
+    SENSORS = ((0, 3416, 1651, 'Sensor A'), (1, 3416, 1651, 'Sensor B'))
+    PUMP_PIN, LED_PINS, WAKE_BUTTON, WAKE_TOUCH = 10, (), 9, None
+elif CHIP == 'esp32c6':       # 4/5/8/9/15 = strapping, 12/13 = USB, 16/17 = console, 24-30 = flash
+    ADC_PINS = (0, 1, 2, 3, 6)
+    IO_PINS = (0, 1, 2, 3, 6, 7, 10, 11, 18, 19, 20, 21)
+    UART_IDS = (1,)
+    CPUS = (80, 160)
+    I2C_SDA, I2C_SCL = 22, 23
+    SENSORS = ((0, 3416, 1651, 'Sensor A'), (1, 3416, 1651, 'Sensor B'))
+    PUMP_PIN, LED_PINS, WAKE_BUTTON, WAKE_TOUCH = 10, (), 9, None
+
+if BOARD == 'ttgo-tcall':     # TTGO T-Call V1.4: SIM800L on 26/27, power 23, PWKEY 4, RST 5, IP5306 on I2C
+    MODEM_TX, MODEM_RX, MODEM_PWKEY, MODEM_RST, MODEM_POWER = 27, 26, 4, 5, 23
+    MODEM_UART, MODEM_IP5306 = 2, True
+    PUMP_PIN = 18             # 23 belongs to the modem here
+    LED_PINS = ()             # 26/27 belong to the modem
+    UART_IDS = (1,)           # UART2 = modem
