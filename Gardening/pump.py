@@ -30,7 +30,7 @@ CFG = S.DATA_DIR + '/pump.json'
 LOG = S.DATA_DIR + '/pump.log'
 LOG_MAX = 8 * 1024             # pump.log is renamed to pump.old at this size
 MODES = ('manual', 'schedule', 'auto')
-DEFAULTS = {'mode': 'manual', 'man_s': 15, 'times': '06:30', 'sched_s': 20, 'skip_moist': True,
+DEFAULTS = {'enabled': True, 'mode': 'manual', 'man_s': 15, 'times': '06:30', 'sched_s': 20, 'skip_moist': True,
             'pulse_s': 15, 'soak_min': 10, 'max_pulses': 4, 'hours': '05:30-09:00', 'target': 3,
             'sensors': [0], 'fault': '', 'day': '', 'day_s': 0, 'done': '',
             # optional flow sensor protection + water statistics

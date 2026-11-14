@@ -6,9 +6,9 @@
 #   gsm       SIM800L SMS / calls / GPRS       battery   battery / supply monitor
 #   leds      4-LED band indicator             rgb       RGB status light
 #   power     power saving / sleep cycle       recorder  CSV recording to flash
-#   display   OLED / TFT screens (Displays panel)
+#   display   OLED / TFT screens (Displays panel)  heater    PID heater control (Heater panel)
 # Soil sensors, the air sensor and the sensor registry are always on.
-FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display')
+FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display', 'heater')
 
 # Soil sensors TEMPLATE: (gpio, dry_raw, wet_raw, name). Used only to create the sensor list the first
 # time; after that sensors are added / calibrated / removed from the dashboard Sensors panel
@@ -108,6 +108,23 @@ WAKE_TOUCH = None             # touch-capable GPIO (e.g. 13 or 32) to wake by to
 MAX_AWAKE_MIN = 60            # page use keeps it awake at most this long after a wake (then sleeps)
 MAINT_MAX_H = 2               # "stay awake (maintenance)" button duration
 CYCLE_SAMPLES = 8             # readings averaged per sleep-cycle wake (~2 s)
+
+# Heater with PID control (heater.py): defaults for the dashboard Heater panel (/data/heater.json wins).
+HEATER_PIN = None             # GPIO -> MOSFET gate (DC heater) or SSR / relay input; None = choose in the panel
+HEATER_ACTIVE_HIGH = True     # False for relay boards that switch on with LOW
+HEATER_SOURCE = 'air'         # 'air' = air sensor, or '<sensor id>.<channel>' e.g. 'S3.t1' (DS18B20 #1)
+HEATER_MODE = 'pid'           # 'pid' | 'onoff' (thermostat, lamps / relays without PWM) | 'manual' | 'off'
+HEATER_SETPOINT = 25.0        # desired temperature, degC
+HEATER_HYST = 0.5             # on/off: switch on below setpoint - HYST/2, off above setpoint + HYST/2
+HEATER_MIN_S = 30             # on/off: at least this many seconds between switches (relay / lamp life)
+HEATER_KP = 20.0              # % output per degC below the setpoint
+HEATER_KI = 2.0               # % per degC per minute (removes the steady offset)
+HEATER_KD = 0.0               # % per degC/min rise (damps overshoot; 0 = PI control)
+HEATER_OUTPUT = 'window'      # 'pwm' = hardware PWM (MOSFET) | 'window' = slow on/off (SSR / relay)
+HEATER_PWM_HZ = 100           # PWM frequency for 'pwm', 1-20000 Hz
+HEATER_WINDOW_S = 10          # window length for 'window', seconds
+HEATER_MAX_PCT = 100          # output limit, %
+HEATER_MAX_C = 40.0           # safety cut-off: output off at or above this temperature
 
 # GSM modem (gsm.py, SIM800L): SMS alerts + commands, MQTT over GPRS. Set up from the dashboard GSM
 # panel (/data/gsm.json); here only the wiring. None = no modem (module not loaded). The TTGO T-Call

@@ -101,7 +101,7 @@ def page(kind, i):
         return {'t': 'Air', 'v': '%.1f' % s.t, 'u': '\xb0C', 'b': k, 'l': l}
     if kind == 'gen' and i < len(s.gch):
         g, v = s.gch[i], s.gval[i]
-        return {'t': g[3], 'v': '-' if v is None else ('%%.%df' % g[5]) % v, 'u': g[4], 'b': None, 'l': []}
+        return {'t': g[3], 'v': '-' if v is None else ('%%.%df' % g[5]) % v, 'u': g[4].replace('&deg;', '\xb0'), 'b': None, 'l': []}
     if kind == 'pump' and app.pump:
         c, pm = app.pump.cfg, app.pump
         st = 'LOCKED' if c['fault'] else 'running' if pm.running else 'ready'

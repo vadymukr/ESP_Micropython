@@ -240,14 +240,16 @@ rm -rf "$BUILD"; mkdir -p "$BUILD/www"
 "$MPYCROSS" -O1 -o "$BUILD/mqtt.mpy" ../mqtt.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_pump.mpy" ui_pump.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_mqtt.mpy" ui_mqtt.py
-for m in ui_wifi ui_files captive ui_batt ui_sensors ui_sensors_set ui_rgb ui_gsm ui_feat ui_display; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
+for m in ui_wifi ui_files captive ui_batt ui_sensors ui_sensors_set ui_rgb ui_gsm ui_feat ui_display ui_heater; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
 "$MPYCROSS" -O1 -o "$BUILD/sensors.mpy" ../sensors.py
+"$MPYCROSS" -O1 -o "$BUILD/sensor_types.mpy" ../sensor_types.py
 "$MPYCROSS" -O1 -o "$BUILD/gsm.mpy" ../gsm.py
+"$MPYCROSS" -O1 -o "$BUILD/gsm_cfg.mpy" ../gsm_cfg.py
 "$MPYCROSS" -O1 -o "$BUILD/recorder.mpy" ../recorder.py
-for m in display disp_oled disp_tft gfont; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" ../$m.py; done
+for m in display disp_oled disp_tft gfont heater; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" ../$m.py; done
 "$MPYCROSS" -O1 -o "$BUILD/rgb.mpy" ../rgb.py           # sensor registry + one file per driver type
 for f in ../drv_*.py; do "$MPYCROSS" -O1 -o "$BUILD/$(basename "${f%.py}").mpy" "$f"; done
-cp main.py settings.py "$BUILD/"
+cp main.py settings.py sensor_types.txt "$BUILD/"
 # wiring profile: --board, else the one in the settings.py already on the board, else the template's
 if [[ -z "$BOARD_SET" ]]; then
   BOARD_SET=$(timeout 20 "$VENV/mpremote" connect "$PORT" exec "
@@ -286,9 +288,9 @@ if [[ -n "$FROZEN" ]]; then
 for m in '$MODS'.split():
     try: os.remove(m + '.mpy')
     except OSError: pass" >/dev/null
-  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/heater.mpy" "$BUILD/ui_heater.mpy" "$BUILD/sensors.mpy" "$BUILD/sensor_types.mpy" "$BUILD/gsm_cfg.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" "$BUILD/sensor_types.txt" : >/dev/null
 else
-  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/heater.mpy" "$BUILD/ui_heater.mpy" "$BUILD/sensors.mpy" "$BUILD/sensor_types.mpy" "$BUILD/gsm_cfg.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" "$BUILD/sensor_types.txt" : >/dev/null
 fi
 $MP cp "$BUILD"/www/*.gz :www/ >/dev/null
 $MP cp fonts/*.bin :fonts/ >/dev/null          # display fonts (read from flash glyph by glyph)

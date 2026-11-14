@@ -7,7 +7,7 @@ PHONE_OK = '+0123456789, '
 
 
 def frag(msg='', ok=False):
-    from gsm import load_cfg, CALL_ACTIONS
+    from gsm_cfg import load_cfg, CALL_ACTIONS
     c = load_cfg()
     g = app.gsm
     out = []
@@ -75,7 +75,7 @@ def frag(msg='', ok=False):
 
 
 def handle(method, path, f):
-    from gsm import load_cfg, save_cfg
+    from gsm_cfg import load_cfg, save_cfg
     if method == 'GET':
         return frag() if path == '/gsm' else None
     g = app.gsm

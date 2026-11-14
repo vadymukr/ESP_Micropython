@@ -191,6 +191,13 @@ function app(){return{
   <div id="files" class="scroll" hx-get="/files" hx-trigger="load, every 60s"></div>
 </section>
 
+<section x-show="has('heater')">
+  <details hx-get="/heater" hx-trigger="toggle once" hx-target="#heater">
+    <summary>Heater &ndash; PID temperature control</summary>
+    <div id="heater"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
 <section x-show="has('display')">
   <details hx-get="/display" hx-trigger="toggle once" hx-target="#display">
     <summary>Displays &ndash; OLED / TFT</summary>

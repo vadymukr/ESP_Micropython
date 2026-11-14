@@ -27,35 +27,7 @@ import time
 from machine import Pin, UART
 import settings as S
 
-CFG = S.DATA_DIR + '/gsm.json'
-DEFAULTS = {'on': False, 'phones': '', 'pin': '', 'max_day': 10, 'a_pump': True, 'a_soil': True, 'a_batt': True,
-            'apn': '', 'apn_user': '', 'apn_pw': '', 'gprs': 'off',      # gprs: 'off' | 'fallback' | 'always'
-            'code': '',                # SMS must start with this word ('' = not needed)
-            'call': 'status',          # call from an allowed number: off | status | pump | toggle
-            'call_sms': True,          # confirm call actions by SMS
-            'alias': ''}               # own keywords: "WORDS=COMMAND; WORDS=COMMAND"
-CALL_ACTIONS = (('off', 'nothing (just hang up)'), ('status', 'reply with the status SMS'),
-                ('pump', 'run the pump (manual run time)'), ('toggle', 'pump on / off'))
-
-
-def load_cfg():
-    c = dict(DEFAULTS)
-    try:
-        with open(CFG) as f:
-            d = json.load(f)
-        for k in c:
-            if k in d:
-                c[k] = d[k]
-    except (OSError, ValueError):
-        pass
-    return c
-
-
-def save_cfg(c):
-    tmp = CFG + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(c, f)
-    os.rename(tmp, CFG)
+from gsm_cfg import CFG, DEFAULTS, CALL_ACTIONS, load_cfg, save_cfg   # noqa: F401 (used by app / SMS)
 
 
 def _digits(n):
@@ -583,7 +555,7 @@ def status_text():
     return ' '.join(p)[:160]
 
 
-HELP = 'STATUS, PUMP [s], STOP, RESET, MODE MANUAL|SCHEDULE|AUTO, WATER, LED ON|OFF|ECO, RGB ON|OFF|ECO, INFO'
+HELP = 'STATUS, PUMP [s], STOP, RESET, MODE MANUAL|SCHEDULE|AUTO, WATER, LED ON|OFF|ECO, RGB ON|OFF|ECO, HEAT [C|ON|OFF], INFO'
 
 
 def sms_command(text, trusted=False):
@@ -651,6 +623,31 @@ def sms_command(text, trusted=False):
         save_cfg(r)
         app.rgb_apply()
         return 'RGB light: %s.' % m
+    if w == 'HEAT':
+        h = app.heater
+        if not h:
+            return 'Heater is not set up (Heater panel).'
+        if arg == 'OFF':
+            if h.c['mode'] != 'off':
+                h.c['on_mode'] = h.c['mode']               # HEAT ON brings this mode back
+            h.c['mode'] = 'off'
+        elif arg == 'ON':
+            h.c['mode'] = h.c.get('on_mode', 'pid')
+        elif arg:
+            try:
+                sp = float(arg)
+            except ValueError:
+                return 'Use: HEAT <setpoint C> | ON | OFF'
+            if not 5 <= sp <= h.c['t_max'] - 1:
+                return 'Setpoint 5-%.0f C.' % (h.c['t_max'] - 1)
+            h.c['sp'] = sp
+            if h.c['mode'] not in ('pid', 'onoff'):
+                h.c['mode'] = h.c.get('on_mode', 'pid')
+        if arg:
+            from heater import save_cfg
+            save_cfg(h.c)
+        return 'Heater %s: %s C, set %.1f C, output %d%%.' % (h.state, '-' if h.t is None else '%.1f' % h.t,
+                                                             h.c['sp'], round(h.outp))
     if w == 'INFO':
         import gc
         g = app.gsm

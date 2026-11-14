@@ -10,6 +10,14 @@ HINTS = {
     'soil': 'Capacitive probe to an ADC1 pin, 3.3 V supply. Defaults = the 2 Nov calibration of this probe model; '
             'after adding, press <i>Dry = now</i> with the probe in air and <i>Wet = now</i> in water to the line.',
     'analog': 'Two points mV &rarr; value (straight line). Keep the pin under ~2.45 V (divide higher voltages).',
+    'ntc': 'Divider on an ADC1 pin: 3V3 &rarr; series resistor (same value as the NTC, e.g. 10 k&Omega;) &rarr; pin &rarr; NTC '
+           '&rarr; GND (NTC to GND = 0), or the other way round (1). R25 and Beta are on the probe data sheet (10k B3950 '
+           'is common). Calibrate: type a known temperature in Ref (thermometer, ice water = 0) and press '
+           '<i>Offset = reference now</i>; leave Ref blank to match the air sensor. For a second point, set Gain = '
+           '(true difference) / (read difference).',
+    'max6675': 'MAX6675 module: VCC 3.3-5 V, GND, SO &rarr; SO pin, SCK &rarr; SCK pin, CS &rarr; CS pin; thermocouple '
+               'red/&minus; and yellow/+ (K type). Reads 0-1024 &deg;C in 0.25 &deg;C steps. Calibrate like the NTC: a '
+               'known temperature in Ref, then <i>Offset = reference now</i> (ice water = 0 &deg;C is a good check).',
     'ds18b20': 'Data to the pin with 4.7 k&Omega; to 3.3 V; several probes in parallel on one pin, each becomes a reading. '
                'Probes added later: save this sensor again (rescans).',
     'dht': 'Data to the pin; 10 k&Omega; pull-up to 3.3 V if the module has none. One reading per ~2 s.',
@@ -54,8 +62,9 @@ def _live(e):
 
 def form(R, typ, cur=None):
     """Add / edit form for one type (list of HTML parts)."""
+    import sensor_types as T
     lst = app.sens.reg
-    kind, fields = R.TYPES[typ][1], R.TYPES[typ][2]
+    kind, fields = T.get(typ)[1:3]
     out = ['<form class="set" hx-post="/sensors/save" hx-target="#smsg">'
            '<input type="hidden" name="id" value="%s"><b style="flex-basis:100%%">%s</b>'
            % (cur['id'] if cur else '', 'Edit %s' % esc(cur['name']) if cur else 'Add a sensor')]
@@ -63,14 +72,15 @@ def form(R, typ, cur=None):
         out.append('<input type="hidden" name="type" value="%s">' % typ)
     else:
         out.append('<label>Type<select name="type" hx-post="/sensors/form" hx-trigger="change" hx-target="#sform">')
-        for k, v in R.TYPES.items():
-            out.append('<option value="%s"%s>%s</option>' % (k, ' selected' if k == typ else '', esc(v[0])))
+        for k, lbl, _ in T.each():
+            out.append('<option value="%s"%s>%s</option>' % (k, ' selected' if k == typ else '', esc(lbl)))
         out.append('</select></label>')
     out.append('<label>Name<input name="name" maxlength="20" value="%s" required style="width:10em"></label>'
                % esc(cur['name'] if cur else ''))
     if kind != 'i2c':
         pins = R.free_pins(kind, lst, cur['id'] if cur else None)
         sel = (('pin', 'RX pin (from sensor TX)'), ('pin2', 'TX pin (to sensor RX)')) if kind == 'uart' else \
+            (('pin', 'SO pin (data)'), ('pin2', 'SCK pin'), ('pin3', 'CS pin')) if kind == 'spi' else \
             (('pin', 'Pin (%s)' % ('ADC1' if kind == 'adc' else 'GPIO')),)
         for n, (key, lbl) in enumerate(sel):
             out.append('<label>%s<select name="%s">' % (lbl, key))
@@ -94,6 +104,7 @@ def form(R, typ, cur=None):
 
 
 def frag(R, msg=''):
+    from sensor_types import label
     lst = app.sens.reg
     out = ['<div id="smsg">']
     if msg:
@@ -102,13 +113,14 @@ def frag(R, msg=''):
     for e in lst:
         sid = e['id']
         out.append('<tr><td>%s <small>%s</small></td><td>%s%s</td><td>%s</td><td>%s</td><td>'
-                   % (esc(e['name']), sid, esc(R.TYPES.get(e['type'], (e['type'],))[0]),
+                   % (esc(e['name']), sid, esc(label(e['type'])[0]),
                       ' <small>dry %d / wet %d</small>' % (e['dry'], e['wet']) if e['type'] == 'soil' else '',
-                      ('GPIO%d' % e['pin'] + (' / %d' % e['pin2'] if 'pin2' in e else '')) if 'pin' in e
+                      ('GPIO%d' % e['pin'] + (' / %d' % e['pin2'] if 'pin2' in e else '') +
+                       (' / %d' % e['pin3'] if 'pin3' in e else '')) if 'pin' in e
                       else 'I2C 0x%s' % e['addr'].upper() if 'addr' in e else '-',
                       _live(e)))
         out.append('<button class="small" hx-post="/sensors/edit" hx-vals=\'{"id":"%s"}\' hx-target="#sform">Edit</button> ' % sid)
-        cal = R.TYPES.get(e['type'], (0, 0, 0, 0, None))[4]
+        cal = label(e['type'])[1]
         if cal:                                 # driver calibration, e.g. MQ R0 in clean air
             out.append('<button class="small" hx-post="/sensors/cal" hx-vals=\'{"id":"%s"}\' hx-target="#smsg">%s</button> '
                        % (sid, cal))
@@ -121,15 +133,22 @@ def frag(R, msg=''):
                    '<button class="small danger" hx-post="/sensors/del" hx-vals=\'{"id":"%s"}\' hx-target="#smsg">Yes</button> '
                    '<button class="small" @click="c=0">No</button></span></span></td></tr>' % sid)
     sn = app.sens
-    if sn.clim:                                # built-in air sensor (climate.py, auto-detected, not editable)
+    if sn.air_on:                              # built-in air sensor (climate.py, auto-detected): removable
         out.append('<tr><td>Air <small>built in</small></td><td>%s <small>(detected automatically)</small></td><td>I2C %s</td>'
-                   '<td>%s</td><td class="muted">always on</td></tr>'
-                   % (esc(sn.clim_name), ', '.join('0x%02X' % a for a in sn.air_addrs()),
+                   '<td>%s</td><td><span x-data="{c:0}"><button class="small" x-show="!c" @click="c=1">Remove</button>'
+                   '<span x-show="c">Sure? <button class="small danger" hx-post="/sensors/air" hx-vals=\'{"on":"0"}\' '
+                   'hx-target="#smsg">Yes</button> <button class="small" @click="c=0">No</button></span></span></td></tr>'
+                   % (esc(sn.clim_name) if sn.clim else '<span class="warn">%s</span>' % esc(sn.clim_err or 'starting'),
+                      ', '.join('0x%02X' % a for a in sn.air_addrs()) or '-',
                       ' &middot; '.join(x for x in ('%.1f &deg;C' % sn.t if sn.t is not None else '',
                                                     '%.0f%% RH' % sn.rh if sn.rh is not None else '',
                                                     '%.1f hPa' % sn.p if sn.p is not None else '') if x) or '&ndash;'))
-    out.append('</table><div id="sform">')
-    out += form(R, 'soil')
+    else:
+        out.append('<tr><td>Air <small>built in</small></td><td class="muted">removed (Si70xx / AHT / BMP280 auto-detect)'
+                   '</td><td>-</td><td>-</td><td><button class="small" hx-post="/sensors/air" hx-vals=\'{"on":"1"}\' '
+                   'hx-target="#smsg">Add back</button></td></tr>')
+    out.append('</table><div id="sform"><button class="small" hx-get="/sensors/form?type=soil" hx-target="#sform">'
+               'Add a sensor</button>')
     taken = R.taken_pins(lst)
     out.append('</div><p class="muted">Pins in use: %s. Free ADC1: %s. Free GPIO: %s. I2C in use: %s. '
                'Adding, removing or moving a sensor restarts the board (about 20 s) and stops a running recording '
@@ -152,9 +171,11 @@ def handle(method, path, f):
             cur = [e for e in app.sens.reg if e['id'] == f.get('id')]
             return form(R, cur[0]['type'], cur[0]) if cur else None
         if path == '/sensors/form':
-            t = f.get('type')
-            return form(R, t) if t in R.TYPES else None
+            from sensor_types import get
+            t = f.get('type', '')
+            return form(R, t) if t and all(c.isalpha() or c.isdigit() for c in t) and get(t) else None
         return None
     finally:
         R = None
-        sys.modules.pop('sensors', None)      # registry module only needed during the request
+        for m in ('sensors', 'sensor_types'):
+            sys.modules.pop(m, None)          # registry modules only needed during the request

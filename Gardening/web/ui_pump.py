@@ -18,10 +18,33 @@ def _log_tail(n=8):
     return [x for x in lines if x][-n:]
 
 
+def _enable(on):
+    """Write pump.json 'enabled' (pump.py not loaded while disabled)."""
+    import json
+    import os
+    path = S.DATA_DIR + '/pump.json'
+    try:
+        with open(path) as f:
+            c = json.load(f)
+    except (OSError, ValueError):
+        c = {}
+    c['enabled'] = on
+    with open(path + '.tmp', 'w') as f:
+        json.dump(c, f)
+    os.rename(path + '.tmp', path)
+
+
 def frag_pump(msg='', ok=False):
     p = app.pump
     if not p:
-        return '<p class="muted">No pump configured (PUMP_PIN in settings.py).</p>'
+        if getattr(S, 'PUMP_PIN', None) is None:
+            return '<p class="muted">No pump pin set (PUMP_PIN in settings.py).</p>'
+        if not app.pump_enabled():
+            return ('%s<p>The pump is <b>disabled</b>: its code is not loaded (about 10 KB more free RAM), its dashboard '
+                    'card is hidden and GPIO%d is free for other uses.</p><button hx-post="/pump/enable" '
+                    'hx-target="#pump">Enable the pump</button> <span class="muted">(the board restarts, about 20 s)</span>'
+                    % ('<p class="%s">%s</p>' % ('ok' if ok else 'warn', esc(msg)) if msg else '', S.PUMP_PIN))
+        return '<p class="muted">Pump not running (switched off in Features).</p>'
     from pump import MODES, FLOW_TYPES
     c = p.cfg
     sel = lambda a, b: ' selected' if a == b else ''
@@ -106,13 +129,38 @@ def _stats(p):
     out.append('<p><span x-data="{c:0}"><button class="small" x-show="!c" @click="c=1">Reset statistics</button>'
                '<span x-show="c">Clear the history and total? <button class="small danger" hx-post="/pump/statreset" '
                'hx-target="#pump">Yes</button> <button class="small" @click="c=0">No</button></span></span></p>')
+    out.append('<p x-data="{c:0}" style="margin-top:12px"><button class="small" x-show="!c" @click="c=1">Disable the pump'
+               '</button><span x-show="c">Disable the pump and restart? It stops a running pump; settings are kept. '
+               '<button class="small danger" hx-post="/pump/disable" hx-target="#pump">Yes</button> '
+               '<button class="small" @click="c=0">No</button></span></p>')
     return out
 
 
 def pump_post(path, f):
     p = app.pump
+    if path == '/pump/enable' and not p:
+        import sys
+        import sensors as R
+        try:
+            _enable(True)                      # pin check below sees the pump's pin as taken again
+            t = R.taken_pins(app.sens.reg)
+        finally:
+            R = None
+            sys.modules.pop('sensors', None)
+        # another feature took the pump pin while the pump was off?
+        others = [lbl for pin, lbl in t.items() if pin == S.PUMP_PIN and lbl != 'pump']
+        if others:
+            _enable(False)
+            return frag_pump('GPIO%d is now used by %s - free it first.' % (S.PUMP_PIN, others[0]))
+        app.restart_soon()
+        return '<p class="ok">Pump enabled. The board restarts - reload the page in about 20 s.</p>'
     if not p:
         return None
+    if path == '/pump/disable':
+        p.stop('pump disabled')
+        p.save(enabled=False)
+        app.restart_soon()
+        return '<p class="ok">Pump disabled. The board restarts to free its RAM - reload the page in about 20 s.</p>'
     from pump import MODES, parse_times, parse_hours
     if path == '/pump/run':
         try:

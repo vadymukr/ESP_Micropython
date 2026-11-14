@@ -6,7 +6,7 @@
 #             {"id": "S3", "type": "analog", "name": "Light", "pin": 32, "unit": "%",
 #              "lo_mv": 0, "lo": 0, "hi_mv": 3000, "hi": 100, "dec": 1}]}
 #
-# Adding a sensor TYPE later = an entry in TYPES below (name, pin kind, form fields) + a driver
+# Adding a sensor TYPE later = a line in web/sensor_types.txt + a driver
 # module drv_<type>.py with a class Driver(entry, ctx) (ctx.i2c = the shared I2C bus, ctx.uart_free =
 # free UART ids, ctx.t / ctx.rh = air temperature / humidity), optional cal() for a calibrate button:
 # chans() -> [(key, label, unit, decimals)],
@@ -22,57 +22,8 @@ CFG = S.DATA_DIR + '/sensors.json'
 ADC_PINS = getattr(S, 'ADC_PINS', (32, 33, 34, 35, 36, 39))     # ADC1: works with WiFi on (ADC2 does not)
 IO_PINS = getattr(S, 'IO_PINS', (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33))
 
-# type -> (label, pin kind, form fields [(key, label, 'num'|'text', default)], driver, calibrate button)
-#   pin kinds: 'adc' = ADC1 pin, 'io' = free GPIO, 'i2c' = shared I2C bus (address field),
-#              'uart' = two free GPIOs (pin = RX from the sensor's TX, pin2 = TX to the sensor's RX)
-#   driver: module drv_<driver>.py (None = drv_<type>.py); calibrate: button label, the driver's
-#   cal() returns (key, value) to store, e.g. MQ 'R0 = now (clean air)'.
-# Soil defaults = the 2026-11-02 calibration of this probe model (average of the two probes:
-# A 3390/1669, B 3443/1633); use Dry/Wet = now in the panel for each new probe.
-SOIL_DRY, SOIL_WET = 3416, 1651
-_I2C = lambda a: [('addr', 'Address hex', 'text', a)]
-_MQ = [('rl', 'Load RL, k&Omega;', 'num', 10), ('div', 'Divider ratio', 'num', 2.22), ('vc', 'Supply, V', 'num', 5.0),
-       ('r0', 'R0, k&Omega;', 'num', 10)]
-_R0 = 'R0 = now (clean air)'
-TYPES = {
-    'soil': ('Soil moisture (capacitive)', 'adc',
-             [('dry', 'Dry raw (in air)', 'num', SOIL_DRY), ('wet', 'Wet raw (in water)', 'num', SOIL_WET)], None, None),
-    'analog': ('Analog sensor (linear scale)', 'adc',
-               [('unit', 'Unit', 'text', ''), ('lo_mv', 'Input low, mV', 'num', 0), ('lo', '= value', 'num', 0),
-                ('hi_mv', 'Input high, mV', 'num', 3000), ('hi', '= value', 'num', 100), ('dec', 'Decimals', 'num', 1)],
-               None, None),
-    'mq2': ('MQ-2 gas: LPG / smoke (analog)', 'adc', _MQ, 'mq', _R0),
-    'mq4': ('MQ-4 gas: methane (analog)', 'adc', _MQ, 'mq', _R0),
-    'mq6': ('MQ-6 gas: LPG / butane (analog)', 'adc', _MQ, 'mq', _R0),
-    'mq7': ('MQ-7 gas: carbon monoxide (analog)', 'adc', _MQ, 'mq', _R0),
-    'mq9': ('MQ-9 gas: CO / flammable (analog)', 'adc', _MQ, 'mq', _R0),
-    'mq135': ('MQ-135 air quality / CO2 (analog)', 'adc', _MQ, 'mq', _R0),
-    'acs758': ('ACS758 Hall current sensor (analog)', 'adc',
-               [('mv_a', 'mV per A', 'num', 40), ('zero_mv', 'Zero, mV', 'num', 2500), ('div', 'Divider ratio', 'num', 2.22)],
-               None, 'Zero = now (no current)'),
-    'uv': ('UV sensor GUVA-S12SD (analog)', 'adc', [], None, None),
-    'ds18b20': ('DS18B20 temperature, 1-Wire (several per pin)', 'io', [], None, None),
-    'dht': ('DHT11 / DHT22 temperature + humidity', 'io', [('model', 'Model (11 or 22)', 'num', 22)], None, None),
-    'digital': ('Digital input (float / rain / door switch)', 'io',
-                [('pull', 'Pull-up (1/0)', 'num', 1), ('invert', 'Invert (1/0)', 'num', 0), ('unit', 'Label', 'text', '')],
-                None, None),
-    'flow': ('Flow meter YF-S201 / other, pulses', 'io', [('ppl', 'Pulses per litre', 'num', 450)], None, None),
-    'yfs401': ('Flow meter YF-S401, 0.3-6 L/min', 'io', [('ppl', 'Pulses per litre', 'num', 5880)], 'flow', None),
-    'mhz19': ('MH-Z19 CO2, NDIR (UART)', 'uart', [], None, None),
-    'pms': ('PM2.5 laser dust sensor: PMS5003/7003, SDS011 (UART)', 'uart', [], None, None),
-    'aht': ('AHT10 / AHT20 temperature + humidity (I2C)', 'i2c', _I2C('38'), None, None),
-    'sht3x': ('SHT30 / SHT31 temperature + humidity (I2C)', 'i2c', _I2C('44'), None, None),
-    'bme280': ('BME280 / BMP280 temp, humidity, pressure (I2C)', 'i2c', _I2C('76'), None, None),
-    'bh1750': ('BH1750 light, lux (I2C)', 'i2c', _I2C('23'), None, None),
-    'ccs811': ('CCS811 eCO2 / TVOC air quality (I2C)', 'i2c', _I2C('5a'), None, None),
-    'vl53l0x': ('VL53L0X distance, GY-530 / GY-VL53L0XV2 (I2C)', 'i2c', _I2C('29'), None, None),
-    'vl53l1x': ('VL53L1X distance up to 4 m (I2C)', 'i2c', _I2C('29'), None, None),
-    'mpu6050': ('MPU-6050 tilt / motion, GY-521 (I2C)', 'i2c', _I2C('68'), None, None),
-    'tcs34725': ('TCS34725 RGB colour sensor (I2C)', 'i2c', _I2C('29'), None, None),
-    'ads1115': ('ADS1115 4-channel ADC, mV (I2C)', 'i2c', _I2C('48'), None, None),
-    'ina219': ('INA219 voltage / current (I2C)', 'i2c', _I2C('41') + [('shunt', 'Shunt, ohm', 'num', 0.1)], None, None),
-}
-
+# The sensor types (names, pin kinds, form fields, drivers) are in web/sensor_types.txt, read line by
+# line by sensor_types.py in the Sensors panel only, so the pin helpers below stay small.
 
 def _default():
     out = []
@@ -107,10 +58,22 @@ def load():
     return lst
 
 
-def save(lst):
+def air_on():
+    """Built-in air sensor (auto-detected on I2C) wanted? Removable in the Sensors panel."""
+    try:
+        with open(CFG) as f:
+            return json.load(f).get('air', True) is not False
+    except (OSError, ValueError):
+        return True
+
+
+def save(lst, air=None):
+    """Write the list; air = True / False switches the built-in air sensor (None = keep)."""
+    if air is None:
+        air = air_on()
     tmp = CFG + '.tmp'
     with open(tmp, 'w') as f:
-        json.dump({'list': lst}, f)
+        json.dump({'list': lst, 'air': air}, f)
     os.rename(tmp, CFG)
 
 
@@ -131,11 +94,16 @@ def taken_pins(lst, skip_id=None):
         t[p] = lbl
     for p in S.SENSOR_PWR_PINS:
         t[p] = 'sensor power'
+    try:                                       # pump disabled in its panel: its GPIO is free
+        with open(S.DATA_DIR + '/pump.json') as f:
+            pump_off = json.load(f).get('enabled', True) is False
+    except (OSError, ValueError):
+        pump_off = False
     for k, lbl in (('PUMP_PIN', 'pump'), ('TANK_PIN', 'tank switch'), ('WAKE_TOUCH', 'touch wake'),
                    ('WAKE_BUTTON', 'wake button'), ('MODEM_TX', 'modem TX'), ('MODEM_RX', 'modem RX'),
                    ('MODEM_PWKEY', 'modem PWKEY'), ('MODEM_RST', 'modem RST'), ('MODEM_POWER', 'modem power')):
         p = getattr(S, k, None)
-        if p is not None:
+        if p is not None and not (pump_off and k in ('PUMP_PIN', 'TANK_PIN')):
             t[p] = lbl
     try:
         with open(S.DATA_DIR + '/batt.json') as f:
@@ -153,6 +121,13 @@ def taken_pins(lst, skip_id=None):
     except (OSError, ValueError, KeyError):
         pass
     try:
+        with open(S.DATA_DIR + '/heater.json') as f:
+            h = json.load(f)
+        if h.get('on') and h.get('pin') is not None:
+            t[h['pin']] = 'heater'
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
         with open(S.DATA_DIR + '/display.json') as f:
             for k, d in enumerate(json.load(f)['list']):
                 for p in ('sck', 'mosi', 'dc', 'rst', 'cs', 'bl', 'touch'):
@@ -162,7 +137,7 @@ def taken_pins(lst, skip_id=None):
         pass
     for e in lst:
         if e['id'] != skip_id:
-            for k in ('pin', 'pin2'):
+            for k in ('pin', 'pin2', 'pin3'):
                 if k in e:
                     t[e[k]] = e['name']
     return t
@@ -172,7 +147,7 @@ def free_pins(kind, lst, skip_id=None):
     if kind == 'i2c':
         return []
     t = taken_pins(lst, skip_id)
-    return [p for p in (ADC_PINS if kind == 'adc' else IO_PINS) if p not in t]      # 'io' and 'uart'
+    return [p for p in (ADC_PINS if kind == 'adc' else IO_PINS) if p not in t]      # 'io', 'uart', 'spi'
 
 
 def i2c_taken(lst, air, skip_id=None):
@@ -181,6 +156,6 @@ def i2c_taken(lst, air, skip_id=None):
     for a in air:
         t[a] = 'air sensor'
     for e in lst:
-        if e['id'] != skip_id and 'addr' in e and TYPES.get(e['type'], ('', ''))[1] == 'i2c':
+        if e['id'] != skip_id and isinstance(e.get('addr'), str):             # only I2C sensors have 'addr'
             t[int(e['addr'], 16)] = e['name']
     return t

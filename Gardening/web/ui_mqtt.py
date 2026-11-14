@@ -22,7 +22,7 @@ def _fields(c):
     sn = app.sens
     opts = [('sen_' + c[5], c[4]) for c in sn.ch] + [('sen_' + d.e['id'], d.e['name']) for d in sn.gen] + [
         ('air', 'Air (temp, RH, pressure)'), ('pump', 'Pump state + events'), ('batt', 'Battery'),
-        ('board', 'Board (WiFi, memory, uptime)')]
+        ('heater', 'Heater (PID)'), ('board', 'Board (WiFi, memory, uptime)')]
     out = ['<span style="flex-basis:100%;font-size:13px;color:var(--muted)">Data to send:</span>']
     for k, lbl in opts:
         out.append('<label class="row" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" '
@@ -93,7 +93,7 @@ def mqtt_post(path, f):
         if not (1 <= port <= 65535 and 10 <= every <= 3600):
             return frag_mqtt('Out of range.')
         sn = app.sens
-        keys = ['sen_' + c[5] for c in sn.ch] + ['sen_' + d.e['id'] for d in sn.gen] + ['air', 'pump', 'batt', 'board']
+        keys = ['sen_' + c[5] for c in sn.ch] + ['sen_' + d.e['id'] for d in sn.gen] + ['air', 'pump', 'batt', 'heater', 'board']
         fields = [k for k in keys if f.get('d_' + k) == '1']
         if len(fields) == len(keys):
             fields = []                   # everything ticked = send everything, also sensors added later

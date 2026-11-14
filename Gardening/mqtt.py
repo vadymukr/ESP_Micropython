@@ -53,7 +53,7 @@ def snapshot(avg, fields):
     avg = Mqtt.avg(); fields = 'sen_<id>', 'air', 'pump', 'batt', 'board' ([] = everything). An unselected
     soil sensor is sent as null so the others keep their position in the list."""
     import gc
-    from app import sens, bands, pump, batt, rec, net, stamp, time_ok, uptime
+    from app import sens, bands, pump, batt, rec, net, stamp, time_ok, uptime, heater
     from bands import BANDS
     S_ = S
     raws, t, rh, hpa, n, gv = avg
@@ -78,7 +78,7 @@ def snapshot(avg, fields):
         if allf or 'sen_' + g[6] in fields:
             v = gv[j] if j < len(gv) else None
             key = g[6] if len([x for x in sens.gch if x[6] == g[6]]) == 1 else g[6] + '.' + g[2]
-            gs[key] = {'name': g[3], 'value': None if v is None else round(v, g[5]), 'unit': g[4]}
+            gs[key] = {'name': g[3], 'value': None if v is None else round(v, g[5]), 'unit': g[4].replace('&deg;', '\xb0')}
     if gs:
         d['sensors'] = gs
     if allf or 'air' in fields:
@@ -90,6 +90,8 @@ def snapshot(avg, fields):
                      'today_s': c['day_s'], 'day_max_s': S_.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty(),
                      'runs_today': c['runs_day'], 'today_l': round(c['l_day'], 3), 'total_l': round(c['l_total'], 2),
                      'flow_lpm': None if pump.lpm is None or not pump.running else round(pump.lpm, 2)}
+    if heater and (allf or 'heater' in fields):
+        d['heater'] = heater.mqtt()
     if batt and (allf or 'batt' in fields):
         d['battery'] = {'v': None if batt.v is None else round(batt.v, 2), 'state': batt.state}
     if allf or 'board' in fields:

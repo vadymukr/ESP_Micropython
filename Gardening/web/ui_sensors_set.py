@@ -94,7 +94,8 @@ def handle(method, path, f):
         return _do(R, path, f)
     finally:
         R = None
-        sys.modules.pop('sensors', None)
+        for m in ('sensors', 'sensor_types'):
+            sys.modules.pop(m, None)
 
 
 def _do(R, path, f):
@@ -129,6 +130,10 @@ def _do(R, path, f):
                 R.save(lst)
                 return done('%s: %s = %s.' % (e['name'], key, val))
         return bad('Sensor not running.')
+    if path == '/sensors/air':                  # built-in air sensor: remove / add back
+        on = f.get('on') == '1'
+        R.save(lst, on)
+        return _restart(lst, 'Air sensor %s.' % ('added back' if on else 'removed'), True)
     if path == '/sensors/del':
         sid = f.get('id')
         old = [dict(x) for x in lst]
@@ -142,9 +147,11 @@ def _do(R, path, f):
         return _restart(new, 'Removed.', True)
     if path == '/sensors/save':
         sid, typ = f.get('id', ''), f.get('type', '')
-        if typ not in R.TYPES:
+        import sensor_types as T
+        spec = T.get(typ) if typ and all(c.isalpha() or c.isdigit() for c in typ) else None
+        if spec is None:
             return bad('Unknown type.')
-        kind, form, drv = R.TYPES[typ][1], R.TYPES[typ][2], R.TYPES[typ][3]
+        kind, form, drv = spec[1:4]
         name = f.get('name', '').strip()[:20]
         if not name or any(ch not in NAME_OK for ch in name):
             return bad('Name: letters, digits, space, - _ . #')
@@ -157,7 +164,7 @@ def _do(R, path, f):
             e['drv'] = drv                        # shared driver module, e.g. all MQ types -> drv_mq
         if kind != 'i2c':
             free = R.free_pins(kind, lst, sid or None)
-            for key in (('pin', 'pin2') if kind == 'uart' else ('pin',)):
+            for key in (('pin', 'pin2') if kind == 'uart' else ('pin', 'pin2', 'pin3') if kind == 'spi' else ('pin',)):
                 try:
                     p = int(f.get(key, ''))
                 except ValueError:
@@ -165,10 +172,12 @@ def _do(R, path, f):
                 if p not in free:
                     return bad('GPIO%d is not free or not suitable for this type.' % p)
                 e[key] = p
+            if kind == 'spi' and len(set((e['pin'], e['pin2'], e['pin3']))) < 3:
+                return bad('SO, SCK and CS must be three different pins.')
             if kind == 'uart':
                 if e['pin'] == e['pin2']:
                     return bad('RX and TX must be different pins.')
-                if not cur and len([x for x in lst if R.TYPES.get(x['type'], ('', ''))[1] == 'uart']) >= 2:
+                if not cur and len([x for x in lst if (T.get(x['type']) or ('', ''))[1] == 'uart']) >= 2:
                     return bad('At most 2 UART sensors (the ESP32 has 2 free UARTs).')
         try:
             for key, lbl, t, dflt in form:
@@ -178,13 +187,13 @@ def _do(R, path, f):
                     e[key] = int(_num(f, key, 0, 4095))
                 elif key == 'dec':
                     e[key] = int(_num(f, key, 0, 3))
-                elif key in ('pull', 'invert'):
+                elif key in ('pull', 'invert', 'top'):
                     e[key] = int(_num(f, key, 0, 1))
                 elif key == 'model':
                     e[key] = int(_num(f, key, 11, 22))
                     if e[key] not in (11, 22):
                         raise ValueError('model must be 11 or 22')
-                elif key in ('ppl', 'shunt', 'rl', 'div', 'vc', 'r0', 'mv_a'):
+                elif key in ('ppl', 'shunt', 'rl', 'div', 'vc', 'r0', 'mv_a', 'r25', 'rs', 'beta', 'vcc_mv', 'gain'):
                     e[key] = _num(f, key, 0.001, 100000)
                 else:
                     e[key] = _num(f, key, -1e6, 1e6)
