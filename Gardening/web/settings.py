@@ -6,9 +6,9 @@
 #   gsm       SIM800L SMS / calls / GPRS       battery   battery / supply monitor
 #   leds      4-LED band indicator             rgb       RGB status light
 #   power     power saving / sleep cycle       recorder  CSV recording to flash
-#   display   OLED / TFT screens (Displays panel)  heater    PID heater control (Heater panel)
+#   display   OLED / TFT screens (Displays panel)  control   heater / light / fan control (Control panel)
 # Soil sensors, the air sensor and the sensor registry are always on.
-FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display', 'heater')
+FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display', 'control')
 
 # Soil sensors TEMPLATE: (gpio, dry_raw, wet_raw, name). Used only to create the sensor list the first
 # time; after that sensors are added / calibrated / removed from the dashboard Sensors panel
@@ -109,7 +109,8 @@ MAX_AWAKE_MIN = 60            # page use keeps it awake at most this long after 
 MAINT_MAX_H = 2               # "stay awake (maintenance)" button duration
 CYCLE_SAMPLES = 8             # readings averaged per sleep-cycle wake (~2 s)
 
-# Heater with PID control (heater.py): defaults for the dashboard Heater panel (/data/heater.json wins).
+# Controllers (control.py): defaults for a new heater / light in the dashboard Control panel
+# (/data/control.json wins). Heater:
 HEATER_PIN = None             # GPIO -> MOSFET gate (DC heater) or SSR / relay input; None = choose in the panel
 HEATER_ACTIVE_HIGH = True     # False for relay boards that switch on with LOW
 HEATER_SOURCE = 'air'         # 'air' = air sensor, or '<sensor id>.<channel>' e.g. 'S3.t1' (DS18B20 #1)
@@ -125,6 +126,10 @@ HEATER_PWM_HZ = 100           # PWM frequency for 'pwm', 1-20000 Hz
 HEATER_WINDOW_S = 10          # window length for 'window', seconds
 HEATER_MAX_PCT = 100          # output limit, %
 HEATER_MAX_C = 40.0           # safety cut-off: output off at or above this temperature
+# Light (PWM dimmer): LED strip through a logic-level MOSFET, or a PWM-dimmable LED driver
+LIGHT_PWM_HZ = 1000           # high enough not to flicker
+LIGHT_GAMMA = True            # dimming curve that looks even to the eye
+LIGHT_LEVEL = 60              # default manual level, %
 
 # GSM modem (gsm.py, SIM800L): SMS alerts + commands, MQTT over GPRS. Set up from the dashboard GSM
 # panel (/data/gsm.json); here only the wiring. None = no modem (module not loaded). The TTGO T-Call

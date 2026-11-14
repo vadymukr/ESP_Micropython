@@ -9,7 +9,7 @@ import settings as S
 INFO = (('pump', 'Watering pump', 8), ('mqtt', 'MQTT publisher', 9), ('gsm', 'GSM modem (SIM800L)', 16),
         ('battery', 'Battery / supply monitor', 2), ('leds', '4-LED band indicator', 1),
         ('rgb', 'RGB status light', 2), ('power', 'Power saving / sleep cycle', 6),
-        ('recorder', 'CSV recording', 5), ('display', 'Displays (OLED / TFT)', 16), ('heater', 'Heater (PID)', 6))
+        ('recorder', 'CSV recording', 5), ('display', 'Displays (OLED / TFT)', 16), ('control', 'Controllers: heater, light, fan', 7))
 CFG = S.DATA_DIR + '/features.json'
 
 

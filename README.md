@@ -44,12 +44,15 @@ Everything lives in [`Gardening/`](Gardening/).
   - MQTT over GPRS when WiFi is down.
 
   The SIM800L is 2G only.
-- **Heater with PID control.** One GPIO drives a MOSFET (PWM, 1 Hz–20 kHz) or an SSR/relay (slow
-  time-proportional window). An on/off thermostat mode with hysteresis and a minimum switching time
-  covers heat lamps and relays. It follows any temperature sensor: the air sensor, DS18B20, DHT and
-  others. The setpoint, Kp/Ki/Kd, output type and limits are set in the Heater panel, with defaults
-  in `settings.py`. It switches off when the sensor stops reading or a cut-off temperature is reached.
-  Values go to MQTT, and `HEAT 24` / `HEAT OFF` work by SMS.
+- **Controllers: heater, light dimmer, fan.** Up to three, each on its own GPIO, following any
+  sensor (temperature, humidity, lux...).
+  - Modes: PID, on/off with hysteresis and a minimum switching time (lamps, relays, no PWM), manual
+    level (a dimmer), off.
+  - Output: PWM (MOSFET, LED driver, 4-pin fan) or a slow time-proportional window for SSRs/relays.
+  - Lights: 1 kHz PWM, gamma curve for even dimming, minimum level; active hours for grow lights.
+  - Safety: output off when the sensor stops reading or a cut-off value is reached.
+  - Dashboard card, display page and MQTT values; SMS `HEAT 24`, `LIGHT 60`, `FAN OFF`,
+    `CTRL <name> <value>`.
 - **Displays.**
   - OLED over I2C: SSD1306 128×64 and 128×32, SH1106.
   - Colour TFT over SPI: ST7789, ST7735 and ILI9341.
@@ -118,7 +121,7 @@ free, and these features are switchable:
 | MQTT | ~9 KB |
 | GSM modem | ~16 KB |
 | Displays | ~16 KB |
-| Heater (PID) | ~6 KB |
+| Controllers (heater, light, fan) | ~7 KB |
 | Power saving | ~6 KB |
 | CSV recording | ~5 KB |
 

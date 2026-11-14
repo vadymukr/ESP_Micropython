@@ -191,10 +191,10 @@ function app(){return{
   <div id="files" class="scroll" hx-get="/files" hx-trigger="load, every 60s"></div>
 </section>
 
-<section x-show="has('heater')">
-  <details hx-get="/heater" hx-trigger="toggle once" hx-target="#heater">
-    <summary>Heater &ndash; PID temperature control</summary>
-    <div id="heater"><p class="muted">Loading&hellip;</p></div>
+<section x-show="has('control')">
+  <details hx-get="/control" hx-trigger="toggle once" hx-target="#control">
+    <summary>Control &ndash; heater, light dimmer, fan (PID)</summary>
+    <div id="control"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 

@@ -555,7 +555,8 @@ def status_text():
     return ' '.join(p)[:160]
 
 
-HELP = 'STATUS, PUMP [s], STOP, RESET, MODE MANUAL|SCHEDULE|AUTO, WATER, LED ON|OFF|ECO, RGB ON|OFF|ECO, HEAT [C|ON|OFF], INFO'
+HELP = ('STATUS, PUMP [s], STOP, RESET, MODE MANUAL|SCHEDULE|AUTO, WATER, LED ON|OFF|ECO, RGB ON|OFF|ECO, '
+        'HEAT|LIGHT|FAN [value|ON|OFF], CTRL <name> [value|ON|OFF], INFO')
 
 
 def sms_command(text, trusted=False):
@@ -623,31 +624,8 @@ def sms_command(text, trusted=False):
         save_cfg(r)
         app.rgb_apply()
         return 'RGB light: %s.' % m
-    if w == 'HEAT':
-        h = app.heater
-        if not h:
-            return 'Heater is not set up (Heater panel).'
-        if arg == 'OFF':
-            if h.c['mode'] != 'off':
-                h.c['on_mode'] = h.c['mode']               # HEAT ON brings this mode back
-            h.c['mode'] = 'off'
-        elif arg == 'ON':
-            h.c['mode'] = h.c.get('on_mode', 'pid')
-        elif arg:
-            try:
-                sp = float(arg)
-            except ValueError:
-                return 'Use: HEAT <setpoint C> | ON | OFF'
-            if not 5 <= sp <= h.c['t_max'] - 1:
-                return 'Setpoint 5-%.0f C.' % (h.c['t_max'] - 1)
-            h.c['sp'] = sp
-            if h.c['mode'] not in ('pid', 'onoff'):
-                h.c['mode'] = h.c.get('on_mode', 'pid')
-        if arg:
-            from heater import save_cfg
-            save_cfg(h.c)
-        return 'Heater %s: %s C, set %.1f C, output %d%%.' % (h.state, '-' if h.t is None else '%.1f' % h.t,
-                                                             h.c['sp'], round(h.outp))
+    if w in ('HEAT', 'LIGHT', 'FAN', 'CTRL'):
+        return _ctrl_cmd(app, w, t[1:])
     if w == 'INFO':
         import gc
         g = app.gsm
@@ -656,3 +634,65 @@ def sms_command(text, trusted=False):
             g.op if g else '-', g.csq if g else '-', ', GPRS ' + g.ip if g and g.ip else '', ip,
             gc.mem_free() // 1024, app.uptime() // 3600)
     return 'Commands: ' + HELP
+
+
+def _ctrl_cmd(app, w, args):
+    """HEAT / LIGHT / FAN [value|ON|OFF] (first controller of that kind), CTRL <name> [value|ON|OFF].
+    A value sets the level in manual mode, otherwise the setpoint."""
+    cs = app.ctrl
+    if w == 'CTRL':
+        if not args:
+            return 'Use: CTRL <name> [value|ON|OFF]'
+        key, args = args[0], args[1:]
+    else:
+        key = {'HEAT': 'heater', 'LIGHT': 'light', 'FAN': 'fan'}[w]
+    k = cs.get(key) if cs else None
+    if not k:
+        return 'No %s set up (Control panel).' % key.lower()
+    c, arg = k.c, args[0] if args else ''
+    if arg == 'OFF':
+        if c['mode'] != 'off':
+            c['on_mode'] = c['mode']                       # ON brings this mode back
+        c['mode'] = 'off'
+    elif arg == 'ON':
+        c['mode'] = c.get('on_mode', 'pid') if c.get('on_mode') != 'off' else 'manual'
+    elif arg:
+        try:
+            v = float(arg)
+        except ValueError:
+            return 'Use: %s [value|ON|OFF]' % w
+        if c['mode'] == 'curve':
+            return '%s follows its curve - change it in the Control panel.' % c['name']
+        if c['mode'] == 'sun' or (c['mode'] == 'off' and c.get('on_mode') == 'sun'):
+            if not 0 <= v <= 100:
+                return 'Day level 0-100 %.'
+            c['day'], c['mode'] = int(v), 'sun'
+            c['night'] = min(c['night'], c['day'])
+        elif c['mode'] == 'manual' or (c['mode'] == 'off' and c.get('on_mode') == 'manual'):
+            if not 0 <= v <= 100:
+                return 'Level 0-100 %.'
+            c['man'], c['mode'] = int(v), 'manual'
+        else:
+            if c['cut'] is not None and (v >= c['cut'] if c['kind'] != 'fan' else v <= c['cut']):
+                return 'Setpoint must stay inside the cut-off (%g).' % c['cut']
+            c['sp'] = v
+            if c['mode'] == 'off':
+                c['mode'] = c.get('on_mode', 'pid')
+    if arg:
+        from control_cfg import load_cfg, save_cfg
+        cfg = load_cfg()
+        cfg['list'] = [dict(c) if e['id'] == c['id'] else e for e in cfg['list']]
+        save_cfg(cfg)
+        try:
+            k.step()                                       # reply with the new state
+        except Exception:
+            pass
+    lbl, unit = k.src()
+    if unit and unit[0] != '\xb0':
+        unit = ' ' + unit
+    return '%s %s: %s%s, output %d%%.' % (c['name'], k.state,
+                                          'level %d%%' % c['man'] if c['mode'] == 'manual' else
+                                          'sun %s-%s day %d%%' % (c['rise'], c['set'], c['day']) if c['mode'] == 'sun' else
+                                          'curve' if c['mode'] == 'curve' else
+                                          'off' if c['mode'] == 'off' else 'set %g%s' % (c['sp'], unit),
+                                          '' if k.v is None else ', now %.1f%s' % (k.v, unit), round(k.outp))

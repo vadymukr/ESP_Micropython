@@ -17,7 +17,7 @@ TYPES = (('ssd1306-64', 'OLED 0.96" 128x64 SSD1306 (I2C)', 'i2c'),
          ('st7735-128', 'TFT 1.44" 128x128 ST7735 (SPI)', 'spi'),
          ('ili9341-320', 'TFT 2.4"/2.8" 240x320 ILI9341 (SPI)', 'spi'))
 PAGES = (('soil', 'Soil sensors, one page each'), ('all', 'All soil sensors on one page'), ('air', 'Air'),
-         ('gen', 'Other sensors, one page each'), ('pump', 'Pump / water today'), ('batt', 'Battery'),
+         ('gen', 'Other sensors, one page each'), ('pump', 'Pump / water today'), ('ctrl', 'Controllers (heater, light, fan)'), ('batt', 'Battery'),
          ('clock', 'Clock and connections'))
 DEFAULT = {'type': 'ssd1306-64', 'addr': 60, 'rot': 0, 'pages': ['soil', 'air'], 'page_s': 5, 'bright': 80,
            'off': '', 'xoff': 0, 'yoff': 0}

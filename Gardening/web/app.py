@@ -57,15 +57,15 @@ def flash_free():
 # ---------------------------------------------------------------- features
 # What this board uses: settings.FEATURES, or the Features panel (DATA_DIR/features.json, applied
 # after a restart). A feature that is off is never imported, so its code takes no RAM.
-FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display', 'heater')
+FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display', 'control')
 
 
 def _features():
     try:
         with open(S.DATA_DIR + '/features.json') as f:
-            return tuple(json.load(f)['on'])
+            return tuple('control' if k == 'heater' else k for k in json.load(f)['on'])
     except (OSError, ValueError, KeyError):
-        return tuple(getattr(S, 'FEATURES', FEATURES))
+        return tuple('control' if k == 'heater' else k for k in getattr(S, 'FEATURES', FEATURES))
 
 
 FEAT = _features()
@@ -630,8 +630,8 @@ def frag_live():
                       if pump.cfg['flow'] or pump.cfg['rate_lpm'] else ''))
     if gsm:
         out.append(gsm.card())
-    if heater:
-        out.append(heater.card())
+    if ctrl:
+        out.append(ctrl.card())
     from bands import STAGES
     note = ' &middot; %s' % esc(b.msg) if b.msg and uptime() < 3600 else ''
     out.append('</div><p class="muted">Sampled %s &middot; <span x-text="age"></span> s ago &middot; stage: %s%s</p>'
@@ -747,7 +747,7 @@ STATIC = {
     '/setup': ('setup.html.gz', HTML, 'no-store'),
 }
 POLLS = ('/live', '/status', '/tail', '/files', '/wifi/state', '/favicon.ico', '/htmx.min.js', '/alpine.min.js')
-KNOWN = ('/features', '/display', '/heater', '/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
+KNOWN = ('/features', '/display', '/control', '/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
          '/pump', '/mqtt', '/batt', '/sensors', '/rgb', '/gsm')
 CAPTIVE = ('/generate_204', '/gen_204', '/hotspot-detect.html', '/library/test/success.html',
            '/ncsi.txt', '/connecttest.txt', '/redirect', '/success.txt', '/canonical.html')
@@ -784,16 +784,18 @@ async def route(w, method, path, q, f):
     if seg == 'features':
         return await send(w, ui('ui_feat', 'handle', method, path, f))
     need = {'leds': 'leds', 'power': 'power', 'pump': 'pump', 'mqtt': 'mqtt', 'batt': 'battery', 'rgb': 'rgb',
-            'gsm': 'gsm', 'rec': 'recorder', 'display': 'display', 'heater': 'heater'}.get(seg)
+            'gsm': 'gsm', 'rec': 'recorder', 'display': 'display', 'control': 'control'}.get(seg)
     if need and not has(need):
         return await send(w, '' if seg in ('leds', 'rgb') else
                           '<p class="muted">Switched off in <b>Features</b> (not loaded, no RAM used).</p>')
-    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb', 'gsm', 'display', 'heater'):
+    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb', 'gsm', 'display', 'control'):
         import sys
         name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors',
-                'rgb': 'ui_rgb', 'gsm': 'ui_gsm', 'display': 'ui_display', 'heater': 'ui_heater'}.get(seg, 'ui_cfg')
+                'rgb': 'ui_rgb', 'gsm': 'ui_gsm', 'display': 'ui_display', 'control': 'ui_control'}.get(seg, 'ui_cfg')
         if path in ('/sensors/save', '/sensors/del', '/sensors/cap', '/sensors/cal', '/sensors/air'):
             name = 'ui_sensors_set'
+        elif path == '/control/form':
+            name = 'ui_control_form'
         gc.collect()                           # settings panels: loaded per request, then released
         mod = __import__(name)
         try:
@@ -804,7 +806,7 @@ async def route(w, method, path, q, f):
             # helper modules a panel imported only for its settings (gsm.py ~14 KB): released
             # again while their feature is off (module name -> global holding the running object)
             for m, o in (('gsm', 'gsm'), ('gsm_cfg', 'gsm'), ('rgb', 'rgb'), ('mqtt', 'mqtt'), ('battery', 'batt'), ('leds', 'leds'),
-                         ('display', 'disp'), ('gfont', 'disp'), ('heater', 'heater')):
+                         ('display', 'disp'), ('gfont', 'disp'), ('control', 'ctrl'), ('control_cfg', 'ctrl')):
                 if m in sys.modules and globals()[o] is None:
                     del sys.modules[m]
         if html is not None:
@@ -917,7 +919,7 @@ async def handle(r, w):
 
 
 # ---------------------------------------------------------------- main
-sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = gsm = disp = heater = None
+sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = gsm = disp = ctrl = None
 
 
 def restart_soon(secs=2):
@@ -964,30 +966,35 @@ def mqtt_start():
     return mqtt
 
 
-def _heater_enabled():
-    try:
-        with open(S.DATA_DIR + '/heater.json') as f:
-            return bool(json.load(f).get('on'))
-    except (OSError, ValueError):
-        return False
+def _ctrl_enabled():
+    """Any enabled controller (control.json, or an old heater.json) - without importing control.py."""
+    for name, key in (('control.json', 'list'), ('heater.json', None)):
+        try:
+            with open(S.DATA_DIR + '/' + name) as f:
+                d = json.load(f)
+            return any(e.get('on') for e in d[key]) if key else bool(d.get('on'))
+        except (OSError, ValueError, KeyError):
+            pass
+    return False
 
 
-def heater_apply():
-    """Heater from heater.json: create, reconfigure, or switch off and unload."""
-    global heater
+def ctrl_apply():
+    """Controllers from control.json: create, reconfigure, or unload when none is enabled."""
+    global ctrl
     import sys
-    from heater import Heater, load_cfg
+    from control import Controls, load_cfg
     c = load_cfg()
-    if heater:
-        heater.reconfig(c)                   # off: pin released, its task ends
-        if not c['on']:
-            heater = None
-    elif c['on']:
-        heater = Heater(c)
-        asyncio.create_task(heater.run())
-    if heater is None:
-        sys.modules.pop('heater', None)
-    return heater
+    if ctrl:
+        ctrl.reconfig(c)                     # none enabled: pins released, its task ends
+        if not ctrl.ctls:
+            ctrl = None
+    elif any(e['on'] for e in c['list']):
+        ctrl = Controls(c)
+        asyncio.create_task(ctrl.run())
+    if ctrl is None:
+        sys.modules.pop('control', None)
+        sys.modules.pop('control_cfg', None)
+    return ctrl
 
 
 def _displays():
@@ -1029,6 +1036,18 @@ def display_apply_soon():
             display_apply()
         except Exception as e:
             print('display:', repr(e))
+    asyncio.create_task(_go())
+
+
+def ctrl_apply_soon():
+    """From the panel: apply after the reply is sent and the panel module is released (RAM)."""
+    async def _go():
+        await asyncio.sleep_ms(300)
+        gc.collect()
+        try:
+            ctrl_apply()
+        except Exception as e:
+            print('control:', repr(e))
     asyncio.create_task(_go())
 
 
@@ -1091,7 +1110,7 @@ async def _main():
         asyncio.create_task(pump.run())
     if pwr:
         asyncio.create_task(pwr.run(lambda: net.ap.active() or net.pending is not None or (pump is not None and pump.busy()) or
-                                    (heater is not None and heater.active()),
+                                    (ctrl is not None and ctrl.active()),
                                     _before_sleep, lambda: batt is not None and batt.state != 'ok'))
     if has('mqtt') and _mqtt_enabled():
         mqtt_start()
@@ -1099,8 +1118,8 @@ async def _main():
         gsm_start()
     if has('display') and _displays():
         display_apply()
-    if has('heater') and _heater_enabled():
-        heater_apply()
+    if has('control') and _ctrl_enabled():
+        ctrl_apply()
     await asyncio.start_server(handle, '0.0.0.0', S.HTTP_PORT, backlog=5)
     print('http: listening on port', S.HTTP_PORT, '- free heap', gc.mem_free())
     while True:
@@ -1112,8 +1131,8 @@ def _before_sleep():
         rgb.off()
     if disp:
         disp.off()
-    if heater:
-        heater.off()
+    if ctrl:
+        ctrl.off()
     if pump:
         pump.stop('going to sleep')
         pump._set(False)

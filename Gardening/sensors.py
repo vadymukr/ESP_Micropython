@@ -120,13 +120,19 @@ def taken_pins(lst, skip_id=None):
                 t[p] = 'RGB light ' + c
     except (OSError, ValueError, KeyError):
         pass
-    try:
-        with open(S.DATA_DIR + '/heater.json') as f:
-            h = json.load(f)
-        if h.get('on') and h.get('pin') is not None:
-            t[h['pin']] = 'heater'
+    try:                                       # controllers (heater / light / fan); old heater.json until migrated
+        with open(S.DATA_DIR + '/control.json') as f:
+            for e in json.load(f)['list']:
+                if e.get('pin') is not None:
+                    t[e['pin']] = e.get('name', 'controller')
     except (OSError, ValueError, KeyError):
-        pass
+        try:
+            with open(S.DATA_DIR + '/heater.json') as f:
+                h = json.load(f)
+            if h.get('on') and h.get('pin') is not None:
+                t[h['pin']] = 'heater'
+        except (OSError, ValueError, KeyError):
+            pass
     try:
         with open(S.DATA_DIR + '/display.json') as f:
             for k, d in enumerate(json.load(f)['list']):

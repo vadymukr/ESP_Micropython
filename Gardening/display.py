@@ -65,6 +65,8 @@ def pages_of(e):
             out += [('soil', i) for i in range(len(app.sens.ch))]
         elif k == 'gen':
             out += [('gen', j) for j in range(len(app.sens.gch))]
+        elif k == 'ctrl':
+            out += [('ctrl', j) for j in range(len(app.ctrl.ctls) if app.ctrl else 0)]
         elif k == 'air' and app.sens.t is None:
             continue
         elif k == 'pump' and not app.pump:
@@ -102,6 +104,17 @@ def page(kind, i):
     if kind == 'gen' and i < len(s.gch):
         g, v = s.gch[i], s.gval[i]
         return {'t': g[3], 'v': '-' if v is None else ('%%.%df' % g[5]) % v, 'u': g[4].replace('&deg;', '\xb0'), 'b': None, 'l': []}
+    if kind == 'ctrl' and app.ctrl and i < len(app.ctrl.ctls):
+        k = app.ctrl.ctls[i]
+        c = k.c
+        lbl, u = k.src()
+        if c['mode'] in ('manual', 'sun') or k.v is None and not c['src']:
+            v, u = '%d' % round(k.outp), '%'
+        else:
+            v = '-' if k.v is None else '%.1f' % k.v
+        return {'t': c['name'], 'v': v, 'u': u, 'b': 'dry' if k.fault else 'good' if k.outp else None,
+                'l': ['%s %d%%' % (k.state, round(k.outp)), '' if c['mode'] in ('manual', 'sun', 'curve') else
+                      'set %g%s' % (c['sp'], u)]}
     if kind == 'pump' and app.pump:
         c, pm = app.pump.cfg, app.pump
         st = 'LOCKED' if c['fault'] else 'running' if pm.running else 'ready'
