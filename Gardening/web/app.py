@@ -134,22 +134,14 @@ class Sensors:
         self.gch = []                        # their channels: (driver idx, chan idx, key, label, unit, dec, id)
         self.bad = []                        # (name, error) of sensors that did not start
         for e in self.reg:
-            try:
-                if e['type'] == 'soil':
+            if e['type'] == 'soil':
+                try:
                     self.ch.append(self._soil(e))
-                else:
-                    d = __import__('drv_' + e['type']).Driver(e)
-                    gi = len(self.gen)
-                    self.gen.append(d)
-                    for k, (key, label, unit, dec) in enumerate(d.chans()):
-                        self.gch.append((gi, k, key, label, unit, dec, e['id']))
-            except Exception as ex:
-                print('sensor %s not started: %r' % (e.get('name'), ex))
-                self.bad.append((e.get('name', '?'), str(ex)))
+                except Exception as ex:
+                    self.bad.append((e.get('name', '?'), str(ex)))
         if not self.ch:                      # bands / pump need a soil sensor: fall back to the template
             pin, dry, wet, name = S.SENSORS[0]
             self.ch.append(self._soil({'pin': pin, 'dry': dry, 'wet': wet, 'name': name, 'id': 'S1'}))
-        self.gval = [None] * len(self.gch)
         self.raw = [0] * len(self.ch)
         self.t = self.rh = self.p = None
         self.updated = 0
@@ -160,8 +152,26 @@ class Sensors:
         self._fails = 0                      # consecutive read failures
         self._backoff = S.AIR_RETRY_S[0]
         self._next_try = 0                   # uptime() of the next detect attempt
-        self._clim_init()
+        self._clim_init()                    # also creates the shared I2C bus (self.i2c)
+        for e in self.reg:                   # other sensors: drivers get this object as ctx (ctx.i2c)
+            if e['type'] == 'soil':
+                continue
+            try:
+                d = __import__('drv_' + e['type']).Driver(e, self)
+                gi = len(self.gen)
+                self.gen.append(d)
+                for k, (key, label, unit, dec) in enumerate(d.chans()):
+                    self.gch.append((gi, k, key, label, unit, dec, e['id']))
+            except Exception as ex:
+                print('sensor %s not started: %r' % (e.get('name'), ex))
+                self.bad.append((e.get('name', '?'), str(ex)))
+        self.gval = [None] * len(self.gch)
         self.acc_reset()
+
+    def air_addrs(self):
+        """I2C addresses used by the auto-detected air sensor."""
+        c = self.clim
+        return [getattr(x, 'addr', None) for x in ((c.hum, c.baro) if c else ()) if x and getattr(x, 'addr', None)]
 
     @staticmethod
     def _soil(e):
@@ -783,6 +793,15 @@ conns = 0
 
 
 async def send(w, body, ctype=HTML, status='200 OK', extra=''):
+    if isinstance(body, list):              # parts streamed one by one: no big joined copy in RAM
+        w.write(('HTTP/1.1 %s\r\nContent-Type: %s\r\nCache-Control: no-store\r\nConnection: close\r\n%s\r\n'
+                 % (status, ctype, extra)).encode())
+        for i, p in enumerate(body):
+            w.write(p.encode())
+            if i % 8 == 7:
+                await w.drain()
+        await w.drain()
+        return
     if isinstance(body, str):
         body = body.encode()
     w.write(('HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n'
@@ -853,10 +872,12 @@ async def route(w, method, path, q, f):
     if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors'):
         import sys
         name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors'}.get(seg, 'ui_cfg')
+        if path in ('/sensors/save', '/sensors/del', '/sensors/cap'):
+            name = 'ui_sensors_set'
         gc.collect()                           # settings panels: loaded per request, then released
         mod = __import__(name)
         try:
-            html = mod.handle(method, path, f)
+            html = mod.handle(method, path, f if method == 'POST' else q)
         finally:
             mod = None
             del sys.modules[name]

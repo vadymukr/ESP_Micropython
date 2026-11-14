@@ -7,7 +7,8 @@
 #              "lo_mv": 0, "lo": 0, "hi_mv": 3000, "hi": 100, "dec": 1}]}
 #
 # Adding a sensor TYPE later = an entry in TYPES below (name, pin kind, form fields) + a driver
-# module drv_<type>.py with a class Driver(entry): chans() -> [(key, label, unit, decimals)],
+# module drv_<type>.py with a class Driver(entry, ctx) (ctx.i2c = the shared I2C bus):
+# chans() -> [(key, label, unit, decimals)],
 # read() -> [value or None per channel], and a short 'info' text. Nothing else in the app changes:
 # every channel automatically gets a dashboard card, an MQTT field and a CSV column.
 # 'soil' is built into app.Sensors (bands, pump and LEDs work with soil sensors).
@@ -20,12 +21,27 @@ ADC_PINS = (32, 33, 34, 35, 36, 39)            # ADC1: works with WiFi on (ADC2 
 IO_PINS = (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)   # free of boot straps / flash
 
 # type -> (label, pin kind, form fields [(key, label, 'num'|'text', default)])
+#   pin kinds: 'adc' = ADC1 pin, 'io' = free GPIO, 'i2c' = shared I2C bus (I2C_SDA/I2C_SCL), address
+# Soil defaults = the 2026-11-02 calibration of this probe model (average of the two probes:
+# A 3390/1669, B 3443/1633); use Dry/Wet = now in the panel for each new probe.
+SOIL_DRY, SOIL_WET = 3416, 1651
 TYPES = {
     'soil': ('Soil moisture (capacitive)', 'adc',
-             [('dry', 'Dry raw (in air)', 'num', 3400), ('wet', 'Wet raw (in water)', 'num', 1650)]),
+             [('dry', 'Dry raw (in air)', 'num', SOIL_DRY), ('wet', 'Wet raw (in water)', 'num', SOIL_WET)]),
     'analog': ('Analog sensor (linear scale)', 'adc',
                [('unit', 'Unit', 'text', ''), ('lo_mv', 'Input low, mV', 'num', 0), ('lo', '= value', 'num', 0),
                 ('hi_mv', 'Input high, mV', 'num', 3000), ('hi', '= value', 'num', 100), ('dec', 'Decimals', 'num', 1)]),
+    'ds18b20': ('DS18B20 temperature, 1-Wire (several per pin)', 'io', []),
+    'dht': ('DHT11 / DHT22 temperature + humidity', 'io', [('model', 'Model (11 or 22)', 'num', 22)]),
+    'digital': ('Digital input (float / rain / door switch)', 'io',
+                [('pull', 'Pull-up (1/0)', 'num', 1), ('invert', 'Invert (1/0)', 'num', 0), ('unit', 'Label', 'text', '')]),
+    'flow': ('Flow meter, pulses (YF-S201...)', 'io', [('ppl', 'Pulses per litre', 'num', 450)]),
+    'aht': ('AHT10 / AHT20 temperature + humidity (I2C)', 'i2c', [('addr', 'Address hex', 'text', '38')]),
+    'sht3x': ('SHT30 / SHT31 temperature + humidity (I2C)', 'i2c', [('addr', 'Address hex', 'text', '44')]),
+    'bme280': ('BME280 / BMP280 temp, humidity, pressure (I2C)', 'i2c', [('addr', 'Address hex', 'text', '76')]),
+    'bh1750': ('BH1750 light, lux (I2C)', 'i2c', [('addr', 'Address hex', 'text', '23')]),
+    'ads1115': ('ADS1115 4-channel ADC, mV (I2C)', 'i2c', [('addr', 'Address hex', 'text', '48')]),
+    'ina219': ('INA219 voltage / current (I2C)', 'i2c', [('addr', 'Address hex', 'text', '41'), ('shunt', 'Shunt, ohm', 'num', 0.1)]),
 }
 
 
@@ -103,5 +119,18 @@ def taken_pins(lst, skip_id=None):
 
 
 def free_pins(kind, lst, skip_id=None):
+    if kind == 'i2c':
+        return []
     t = taken_pins(lst, skip_id)
     return [p for p in (ADC_PINS if kind == 'adc' else IO_PINS) if p not in t]
+
+
+def i2c_taken(lst, air, skip_id=None):
+    """I2C addresses in use: the auto-detected air sensor (air = list of addresses) and other sensors."""
+    t = {}
+    for a in air:
+        t[a] = 'air sensor'
+    for e in lst:
+        if e['id'] != skip_id and 'addr' in e and TYPES.get(e['type'], ('', ''))[1] == 'i2c':
+            t[int(e['addr'], 16)] = e['name']
+    return t

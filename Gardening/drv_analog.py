@@ -5,7 +5,7 @@ from machine import ADC, Pin
 
 
 class Driver:
-    def __init__(self, e):
+    def __init__(self, e, ctx=None):
         self.e = e
         self.adc = ADC(Pin(e['pin']))
         self.adc.atten(ADC.ATTN_11DB)
