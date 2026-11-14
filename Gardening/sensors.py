@@ -88,67 +88,49 @@ def new_id(lst):
     return 'S%d' % n
 
 
+def _json(name):
+    """A DATA_DIR JSON settings file as a dict ({} if missing / unreadable)."""
+    try:
+        with open(S.DATA_DIR + '/' + name) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+# settings.py pins of built-in features: (name, label); the pump ones are free while the pump is disabled
+FIXED = (('PUMP_PIN', 'pump'), ('TANK_PIN', 'tank switch'), ('WAKE_TOUCH', 'touch wake'),
+         ('WAKE_BUTTON', 'wake button'), ('MODEM_TX', 'modem TX'), ('MODEM_RX', 'modem RX'),
+         ('MODEM_PWKEY', 'modem PWKEY'), ('MODEM_RST', 'modem RST'), ('MODEM_POWER', 'modem power'))
+DISPLAY_PINS = ('sck', 'mosi', 'dc', 'rst', 'cs', 'bl', 'touch')
+
+
+def _feature_pins():
+    """(pin, label) of the optional features set up in their panels: battery, RGB light, controllers, displays."""
+    b, r = _json('batt.json'), _json('rgb.json')
+    if b.get('on') and 'pin' in b:
+        yield b['pin'], 'battery'
+    if r.get('on'):
+        yield from zip(r.get('pins', ()), ('RGB light R', 'RGB light G', 'RGB light B'))
+    ctl = _json('control.json').get('list')
+    if ctl is None:                            # old heater.json until it is migrated
+        h = _json('heater.json')
+        ctl = [dict(h, name='heater')] if h.get('on') else []
+    yield from ((e['pin'], e.get('name', 'controller')) for e in ctl if e.get('pin') is not None)
+    for k, d in enumerate(_json('display.json').get('list', ())):
+        yield from ((d[p], 'display %d %s' % (k + 1, p.upper())) for p in DISPLAY_PINS if d.get(p) is not None)
+
+
 def taken_pins(lst, skip_id=None):
     """Pins used by other features and by the other sensors (pin -> what uses it)."""
     t = {S.I2C_SCL: 'I2C SCL', S.I2C_SDA: 'I2C SDA'}
-    for p in S.LED_PINS:
-        t[p] = 'LED'
-    for p, lbl in getattr(S, 'BOARD_PINS', {}).items():       # wired on the board (screen, touch...)
-        t[p] = lbl
-    for p in S.SENSOR_PWR_PINS:
-        t[p] = 'sensor power'
-    try:                                       # pump disabled in its panel: its GPIO is free
-        with open(S.DATA_DIR + '/pump.json') as f:
-            pump_off = json.load(f).get('enabled', True) is False
-    except (OSError, ValueError):
-        pump_off = False
-    for k, lbl in (('PUMP_PIN', 'pump'), ('TANK_PIN', 'tank switch'), ('WAKE_TOUCH', 'touch wake'),
-                   ('WAKE_BUTTON', 'wake button'), ('MODEM_TX', 'modem TX'), ('MODEM_RX', 'modem RX'),
-                   ('MODEM_PWKEY', 'modem PWKEY'), ('MODEM_RST', 'modem RST'), ('MODEM_POWER', 'modem power')):
-        p = getattr(S, k, None)
-        if p is not None and not (pump_off and k in ('PUMP_PIN', 'TANK_PIN')):
-            t[p] = lbl
-    try:
-        with open(S.DATA_DIR + '/batt.json') as f:
-            b = json.load(f)
-        if b.get('on'):
-            t[b['pin']] = 'battery'
-    except (OSError, ValueError, KeyError):
-        pass
-    try:
-        with open(S.DATA_DIR + '/rgb.json') as f:
-            r = json.load(f)
-        if r.get('on'):
-            for p, c in zip(r['pins'], 'RGB'):
-                t[p] = 'RGB light ' + c
-    except (OSError, ValueError, KeyError):
-        pass
-    try:                                       # controllers (heater / light / fan); old heater.json until migrated
-        with open(S.DATA_DIR + '/control.json') as f:
-            for e in json.load(f)['list']:
-                if e.get('pin') is not None:
-                    t[e['pin']] = e.get('name', 'controller')
-    except (OSError, ValueError, KeyError):
-        try:
-            with open(S.DATA_DIR + '/heater.json') as f:
-                h = json.load(f)
-            if h.get('on') and h.get('pin') is not None:
-                t[h['pin']] = 'heater'
-        except (OSError, ValueError, KeyError):
-            pass
-    try:
-        with open(S.DATA_DIR + '/display.json') as f:
-            for k, d in enumerate(json.load(f)['list']):
-                for p in ('sck', 'mosi', 'dc', 'rst', 'cs', 'bl', 'touch'):
-                    if d.get(p) is not None:
-                        t[d[p]] = 'display %d %s' % (k + 1, p.upper())
-    except (OSError, ValueError, KeyError):
-        pass
-    for e in lst:
-        if e['id'] != skip_id:
-            for k in ('pin', 'pin2', 'pin3'):
-                if k in e:
-                    t[e[k]] = e['name']
+    t.update((p, 'LED') for p in S.LED_PINS)
+    t.update(getattr(S, 'BOARD_PINS', {}))                       # wired on the board (screen, touch...)
+    t.update((p, 'sensor power') for p in S.SENSOR_PWR_PINS)
+    pump_off = _json('pump.json').get('enabled', True) is False
+    t.update((getattr(S, k), lbl) for k, lbl in FIXED
+             if getattr(S, k, None) is not None and not (pump_off and k in ('PUMP_PIN', 'TANK_PIN')))
+    t.update(_feature_pins())
+    t.update((e[k], e['name']) for e in lst if e['id'] != skip_id for k in ('pin', 'pin2', 'pin3') if k in e)
     return t
 
 

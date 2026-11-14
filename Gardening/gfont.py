@@ -4,6 +4,7 @@
 import struct
 
 DIR = 'fonts/'
+_GBUF = bytearray(1800)        # one glyph (the biggest: n120, 15 bytes x 120 rows)
 
 
 class Font:
@@ -35,10 +36,14 @@ class Font:
         return sum(self._ent(c)[0] for c in s)
 
     def glyph(self, ch):
-        """(width, bytearray of MONO_HLSB rows)."""
+        """(width, MONO_HLSB rows) of a character, read into the shared glyph buffer: valid until the next
+        glyph() call (the drivers blit it at once). No allocation per character."""
         w, off = self._ent(ch)
+        n = ((w + 7) // 8) * self.h
         self.f.seek(off)
-        return w, bytearray(self.f.read(((w + 7) // 8) * self.h))
+        mv = memoryview(_GBUF if n <= len(_GBUF) else bytearray(n))[:n]
+        self.f.readinto(mv)
+        return w, mv
 
     def close(self):
         """Close the font file."""

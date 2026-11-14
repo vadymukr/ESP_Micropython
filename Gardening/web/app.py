@@ -77,29 +77,36 @@ async def sample_loop():
     while True:
         try:
             await sens.sample()
-            pcts = [sens.pct(sens.raw[i], c[2], c[3]) for i, c in enumerate(sens.ch)]
-            bands.update(pcts)
-            if pump:
-                pump.update(pcts)
-            if mqtt:
-                mqtt.feed(sens.raw, sens.t, sens.rh, sens.p, sens.gval)
-            if gsm and gsm.net and uptime() % 30 < S.SAMPLE_S:
-                gsm.check(pcts)
-            if leds:
-                i = min(S.LED_SENSOR, len(pcts) - 1)
-                leds.show(bands.band(i, pcts[i]))
-            if rgb:
-                rgb.show([bands.band(i, p) for i, p in enumerate(pcts)], bool(pump and pump.cfg['fault']))
-            if batt and uptime() >= batt_next:
-                batt_next = uptime() + S.BATT_EVERY_S
-                batt.read()
-                if leds:
-                    leds.batt = batt.state
+            batt_next = _feed(batt_next)
         except Exception as e:
             print('sample error:', e)
         gc.collect()
         heap_note()
         await asyncio.sleep(S.SAMPLE_S)
+
+
+def _feed(batt_next):
+    """Pass one sample to bands, pump, MQTT, GSM alerts, status lights and the battery monitor (every
+    BATT_EVERY_S); returns the time of the next battery reading."""
+    pcts = [sens.pct(sens.raw[i], c[2], c[3]) for i, c in enumerate(sens.ch)]
+    bands.update(pcts)
+    if pump:
+        pump.update(pcts)
+    if mqtt:
+        mqtt.feed(sens.raw, sens.t, sens.rh, sens.p, sens.gval)
+    if gsm and gsm.net and uptime() % 30 < S.SAMPLE_S:
+        gsm.check(pcts)
+    if leds:
+        i = min(S.LED_SENSOR, len(pcts) - 1)
+        leds.show(bands.band(i, pcts[i]))
+    if rgb:
+        rgb.show(list(map(bands.band, range(len(pcts)), pcts)), bool(pump and pump.cfg['fault']))
+    if not batt or uptime() < batt_next:
+        return batt_next
+    batt.read()
+    if leds:
+        leds.batt = batt.state
+    return uptime() + S.BATT_EVERY_S
 
 
 def _busy():

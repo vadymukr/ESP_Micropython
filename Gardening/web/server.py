@@ -32,7 +32,8 @@ PANELS = {'bands': (None, 'ui_cfg'), 'leds': ('leds', 'ui_cfg'), 'power': ('powe
           'sensors': (None, 'ui_sensors'), 'rgb': ('rgb', 'ui_rgb'), 'gsm': ('gsm', 'ui_gsm'),
           'display': ('display', 'ui_display'), 'control': ('control', 'ui_control')}
 SUBPAGES = {'/sensors/save': 'ui_sensors_set', '/sensors/del': 'ui_sensors_set', '/sensors/cap': 'ui_sensors_set',
-            '/sensors/cal': 'ui_sensors_set', '/sensors/air': 'ui_sensors_set', '/control/form': 'ui_control_form'}
+            '/sensors/cal': 'ui_sensors_set', '/sensors/air': 'ui_sensors_set', '/control/form': 'ui_control_form',
+            '/control/save': 'ui_control_save', '/control/del': 'ui_control_save'}
 # helper modules a panel may import only for its settings: released again while the feature is off
 # (module -> app attribute holding the running object)
 HELPERS = (('gsm', 'gsm'), ('gsm_cfg', 'gsm'), ('rgb', 'rgb'), ('mqtt', 'mqtt'), ('battery', 'batt'), ('leds', 'leds'),
@@ -70,13 +71,13 @@ async def send_file(w, path, ctype, extra='', cache='no-store'):
              'Cache-Control: %s\r\nConnection: close\r\n%s\r\n' % (ctype, size, cache, extra)).encode())
     await w.drain()
     buf = bytearray(512)
+    mv = memoryview(buf)                       # last partial chunk without a slice copy
     with open(path, 'rb') as f:
-        while True:
-            n = f.readinto(buf)
-            if not n:
-                break
-            w.write(buf if n == 512 else buf[:n])   # stream copies on partial write
+        n = f.readinto(buf)
+        while n:
+            w.write(buf if n == 512 else mv[:n])
             await w.drain()
+            n = f.readinto(buf)
 
 
 def panel(method, path, q, f):
@@ -112,11 +113,11 @@ async def action(w, path, f):
         if interval not in S.INTERVALS or not 0 <= hours <= S.MAX_HOURS:
             return await send(w, frag_status('Invalid interval or duration.'))
         msg = rec.start(interval, hours, clean(f.get('label', ''), 20))
-        return await send(w, frag_status(msg) + ui('ui_files', 'files_oob'))
+        return await send(w, frag_status(msg) + [ui('ui_files', 'files_oob')])
     if path == '/rec/stop':
         if rec.active or rec.resume:
             rec.stop()
-        return await send(w, frag_status() + ui('ui_files', 'files_oob'))
+        return await send(w, frag_status() + [ui('ui_files', 'files_oob')])
     if path == '/files/delete':
         name = safe_csv(f.get('f'))
         if name and not (name == rec.fname and (rec.active or rec.resume)):

@@ -53,7 +53,8 @@ class Ctl:
         self.sw_at = None
         self.cur = 0.0                 # output actually applied (after the fade)
         self.kick = 0                  # ticks of kick-start left
-        self.was0 = True               # output was at 0 (a fan is standing still)
+        self.is_on = None              # last level written to a switched output
+        self.win_ms, self.on_ms = 10000, 0     # window mode timing (set by _window() after each step)
         if c['on'] and c['pin'] is not None:
             self.pin = Pin(c['pin'], Pin.OUT, value=1 if c['inv'] else 0)
             if c['out'] == 'pwm' and c['mode'] != 'onoff':
@@ -118,7 +119,12 @@ class Ctl:
         return (self.c['src'] or 'no sensor') + ' (missing)', ''
 
     def step(self):
-        """Every ~2 s: new reading -> output %."""
+        """Every ~2 s: new reading -> output % (and the window timing for SSR / relay outputs)."""
+        self._step()
+        self._window()
+
+    def _step(self):
+        """The control law of the current mode: sets outp, state and fault."""
         c = self.c
         v = self.read() if c['src'] else None
         now = time.ticks_ms()
@@ -184,35 +190,41 @@ class Ctl:
         self.state = 'on' if self.outp >= 1 else 'holding' if e > -h - 0.5 else 'idle'
 
     def tick(self, ms):
-        """Output stage, every 0.2 s."""
-        c = self.c
-        if self.pwm:
-            tgt = self.outp
-            if c['ramp_s'] > 0:                            # fade: at most 100 % per ramp_s seconds
-                stp = 20.0 / c['ramp_s']                   # 0.2 s ticks
-                self.cur = min(tgt, self.cur + stp) if tgt > self.cur else max(tgt, self.cur - stp)
-            else:
-                self.cur = tgt
-            if c['kick'] and self.was0 and self.cur > 0:
-                self.kick = 5                              # 1 s at full power from standstill
-            self.was0 = self.cur <= 0
-            if self.kick:
-                self.kick -= 1
-                self._duty(100)
-            else:
-                self._duty(self.cur)
-        elif self.pin is None:
+        """Output stage, every 0.2 s. Returns at once when nothing changes (no allocation: floats are heap
+        objects on the ESP32); window timing in integer milliseconds."""
+        if self.pin is None:
             return
-        elif c['mode'] == 'onoff':
-            self._set(self.outp > 0)
+        if not self.pwm:
+            on = self.outp > 0 if self.c['mode'] == 'onoff' else ms % self.win_ms < self.on_ms
+            if on != self.is_on:
+                self.is_on = on
+                self._set(on)
+            return
+        if self.kick:                                      # kick-start: 1 s at full power
+            self.kick -= 1
+            if not self.kick:
+                self._duty(self.cur)
+            return
+        tgt = self.outp
+        if tgt == self.cur:
+            return
+        r = self.c['ramp_s']
+        stp = 20.0 / r if r > 0 else 100.0                 # fade: at most 100 % per ramp_s seconds
+        was0 = self.cur <= 0
+        self.cur = min(tgt, self.cur + stp) if tgt > self.cur else max(tgt, self.cur - stp)
+        if self.c['kick'] and was0 and self.cur > 0:
+            self.kick = 5
+            self._duty(100)
         else:
-            w = max(2, c['window_s'])
-            on_t = w * self.outp / 100
-            if on_t < c['min_on_s']:
-                on_t = 0
-            elif w - on_t < c['min_on_s']:
-                on_t = w
-            self._set((ms / 1000) % w < on_t)
+            self._duty(self.cur)
+
+    def _window(self):
+        """Window mode: on time per window in ms from the output (every step, not every tick)."""
+        c = self.c
+        w = max(2, c['window_s']) * 1000
+        on = int(w * self.outp / 100)
+        mn = int(c['min_on_s'] * 1000)
+        self.win_ms, self.on_ms = w, 0 if on < mn else w if w - on < mn else on
 
     # ---------------------------------------------------------------- display
     def card(self):
@@ -276,14 +288,19 @@ class Controls:
         while self.ctls:                                   # all removed: task ends (module unloaded)
             ms = time.ticks_ms()
             for k in self.ctls:
-                if n % 10 == 0:
-                    try:
-                        k.step()
-                    except Exception as ex:
-                        k.outp, k.fault = 0.0, repr(ex)
-                try:
-                    k.tick(ms)
-                except Exception:
-                    pass
+                _safe(k, n % 10 == 0, ms)
             n += 1
             await asyncio.sleep_ms(200)
+
+
+def _safe(k, step, ms):
+    """One controller cycle with errors contained: a failing control step switches its output to 0."""
+    if step:
+        try:
+            k.step()
+        except Exception as ex:
+            k.outp, k.fault = 0.0, repr(ex)
+    try:
+        k.tick(ms)
+    except Exception:
+        pass

@@ -132,32 +132,36 @@ class Recorder:
         while True:
             await asyncio.sleep(1)
             try:
-                now = time.time()
-                if self.resume and time_ok():
-                    self.resume = False
-                    if self.end and now >= self.end:
-                        self.stop('Finished (while powered off)')
-                        continue
-                    self.rows = self._count_rows()
-                    self.sens.acc_reset()
-                    self.next = now + self.interval
-                    self.active = True
-                    self.msg = 'Resumed after restart at %s.' % stamp()
-                    print('rec:', self.msg)
-                if not self.active:
-                    continue
-                if now >= self.next:
-                    self._row(now)
-                    self.next += self.interval
-                    if self.next <= now:         # clock jumped forward
-                        self.next = now + self.interval
-                    if flash_free() < S.MIN_FREE_FLASH:
-                        self.stop('Stopped: flash nearly full')
-                    elif os.stat(self.path())[6] > S.MAX_FILE_BYTES:
-                        self.stop('Stopped: file size limit reached')
-                if self.active and self.end and now >= self.end:
-                    self.stop('Finished')
+                self._step(time.time())
             except Exception as e:
                 self.stop('Stopped: error %s' % e)
 
+    def _resume(self, now):
+        """First second with a valid clock after a restart: continue the interrupted recording."""
+        self.resume = False
+        if self.end and now >= self.end:
+            return self.stop('Finished (while powered off)')
+        self.rows = self._count_rows()
+        self.sens.acc_reset()
+        self.next = now + self.interval
+        self.active = True
+        self.msg = 'Resumed after restart at %s.' % stamp()
+        print('rec:', self.msg)
 
+    def _step(self, now):
+        """One second of the task: resume, write a row when due, stop on end time / flash / file size."""
+        if self.resume and time_ok():
+            self._resume(now)
+        if not self.active:
+            return
+        if now >= self.next:
+            self._row(now)
+            self.next += self.interval
+            if self.next <= now:                 # clock jumped forward
+                self.next = now + self.interval
+            if flash_free() < S.MIN_FREE_FLASH:
+                return self.stop('Stopped: flash nearly full')
+            if os.stat(self.path())[6] > S.MAX_FILE_BYTES:
+                return self.stop('Stopped: file size limit reached')
+        if self.end and now >= self.end:
+            self.stop('Finished')

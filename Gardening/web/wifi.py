@@ -171,50 +171,55 @@ class Net:
     # -- state machine, 1 s tick
     def _tick(self):
         """Connection state machine, once a second: connect result, NTP, setup AP, retries."""
-        now = uptime()
-        up = self.sta.isconnected()
+        now, up = uptime(), self.sta.isconnected()
         if self.pending:
-            st = self.sta.status()
-            if up:
-                ssid, pw, save = self.pending
-                self.pending = None
-                if save:
-                    with open('wifi.json', 'w') as f:
-                        json.dump({'ssid': ssid, 'password': pw}, f)
-                    self.creds = {'ssid': ssid, 'password': pw}
-                self.msg = 'Connected to %s.' % ssid
-                # keep the setup AP a little so the phone can read the result, then drop it
-                self.ap_off_at = now + 45 if self.ap.active() else None
-                print('net: WiFi', ssid, self.ip(), '-> http://%s.local/' % S.HOSTNAME)
-            elif now - self.pend_at > 20 or (now - self.pend_at > 4 and st in FAIL_REASON):
-                ssid = self.pending[0]
-                self.pending = None
-                self.msg = 'Could not connect to %s: %s.' % (ssid, FAIL_REASON.get(st, 'timeout'))
-                try:
-                    self.sta.disconnect()
-                except Exception:
-                    pass
-                self._ap(True)
-                self.retry_at = now + 120
-                print('net:', self.msg)
-            return
+            return self._pending(now, up)
         if up:
-            self.down_since = None
-            if self.ap.active() and self.ap_off_at is not None and now >= self.ap_off_at:
-                self._ap(False)
-                self.ap_off_at = None
-            due = S.NTP_EVERY_S if self.ntp_at is not None else 60
-            if now - self.ntp_try >= due:
-                self._ntp()
-        else:
-            if self.down_since is None:
-                self.down_since = now
-            if not self.creds or now - self.down_since > 30:
-                self._ap(True)
-            # retry saved network in the background, but not while someone uses the setup AP
-            if self.creds and now >= self.retry_at and not self.ap_clients():
-                self.retry_at = now + 120
-                self.connect(self.creds['ssid'], self.creds.get('password', ''), False)
+            return self._online(now)
+        if self.down_since is None:
+            self.down_since = now
+        if not self.creds or now - self.down_since > 30:
+            self._ap(True)
+        # retry saved network in the background, but not while someone uses the setup AP
+        if self.creds and now >= self.retry_at and not self.ap_clients():
+            self.retry_at = now + 120
+            self.connect(self.creds['ssid'], self.creds.get('password', ''), False)
+
+    def _pending(self, now, up):
+        """A connect attempt is running: success (save, schedule the AP off) or failure after its timeout."""
+        st = self.sta.status()
+        if up:
+            ssid, pw, save = self.pending
+            self.pending = None
+            if save:
+                self.creds = {'ssid': ssid, 'password': pw}
+                with open('wifi.json', 'w') as f:
+                    json.dump(self.creds, f)
+            self.msg = 'Connected to %s.' % ssid
+            # keep the setup AP a little so the phone can read the result, then drop it
+            self.ap_off_at = now + 45 if self.ap.active() else None
+            print('net: WiFi', ssid, self.ip(), '-> http://%s.local/' % S.HOSTNAME)
+            return
+        if now - self.pend_at <= 20 and not (now - self.pend_at > 4 and st in FAIL_REASON):
+            return
+        ssid, self.pending = self.pending[0], None
+        self.msg = 'Could not connect to %s: %s.' % (ssid, FAIL_REASON.get(st, 'timeout'))
+        try:
+            self.sta.disconnect()
+        except Exception:
+            pass
+        self._ap(True)
+        self.retry_at = now + 120
+        print('net:', self.msg)
+
+    def _online(self, now):
+        """Connected: drop the setup AP when its grace time is over, keep the clock set by NTP."""
+        self.down_since = None
+        if self.ap.active() and self.ap_off_at is not None and now >= self.ap_off_at:
+            self._ap(False)
+            self.ap_off_at = None
+        if now - self.ntp_try >= (S.NTP_EVERY_S if self.ntp_at is not None else 60):
+            self._ntp()
 
     async def run(self):
         """Task: connect with the saved network (or open the setup AP), then tick forever."""

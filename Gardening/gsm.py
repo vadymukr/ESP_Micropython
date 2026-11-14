@@ -30,16 +30,22 @@ from gsm_view import View
 from gsm_sms import Sms
 
 
-def sms_command(text, trusted=False):
-    """SMS / call command -> reply text (gsm_cmd.py, imported on first use)."""
-    from gsm_cmd import sms_command as f
-    return f(text, trusted)
+RX = 1024                      # receive buffer size (an SMS listing or a TCP chunk fits)
+IGNORE = ('Call Ready', 'SMS Ready', 'NO CARRIER', 'BUSY', 'NO ANSWER')
 
 
-def status_text():
-    """Short status for an SMS (gsm_cmd.py)."""
-    from gsm_cmd import status_text as f
-    return f()
+def _command(text, trusted=False):
+    """SMS / call command -> reply (gsm_cmd.py, imported on the first message)."""
+    from gsm_cmd import sms_command
+    return sms_command(text, trusted)
+
+
+def _int(b):
+    """int of a bytes / str number, None if it is not one."""
+    try:
+        return int(b)
+    except ValueError:
+        return None
 
 
 class Gsm(Sms, Gprs, View):
@@ -50,7 +56,9 @@ class Gsm(Sms, Gprs, View):
         self.c, self.ctx = c, ctx
         self.u = None
         self.lock = asyncio.Lock()
-        self.buf = b''
+        self.rx = bytearray(RX)        # receive buffer, filled up to self.n
+        self.mv = memoryview(self.rx)
+        self.n = 0
         self.lines = []                # reply lines of the running command
         self.data = []                 # raw TCP chunks from +CIPRXGET: 2
         self.sms_new = []              # indexes from +CMTI
@@ -95,59 +103,65 @@ class Gsm(Sms, Gprs, View):
         self.u.write(s if isinstance(s, bytes) else s.encode())
 
     async def _reader(self):
-        """Task: collect UART bytes and parse them into lines / events."""
+        """Task: read UART bytes into the fixed receive buffer (no allocation per read) and parse them."""
         while True:
-            n = self.u.any()
-            if n:
-                self.buf += self.u.read(n)
-                self._parse()
+            if self.u.any():
+                if self.n >= RX:                                   # no line end in 1 KB: drop it
+                    self.n = 0
+                k = self.u.readinto(self.mv[self.n:])
+                if k:
+                    self.n += k
+                    self._parse()
             await asyncio.sleep_ms(30)
 
     def _parse(self):
-        """Split the buffer: reply lines, raw TCP data, new SMS, RING / caller ID, link events."""
-        while True:
-            if self.buf.startswith(b'> '):                        # prompt (no line end)
+        """Take complete lines out of the receive buffer: reply lines, raw TCP data, the '> ' prompt and
+        unsolicited events (_event). An incomplete line or data block stays for the next read."""
+        rx, mv, pos, end = self.rx, self.mv, 0, self.n
+        while pos < end:
+            if rx[pos] == 62 and pos + 1 < end and rx[pos + 1] == 32:     # '> ' prompt (no line end)
                 self.lines.append('>')
-                self.buf = self.buf[2:]
+                pos += 2
                 continue
-            i = self.buf.find(b'\r\n')
+            i = rx.find(b'\r\n', pos, end)
             if i < 0:
-                return
-            line, rest = self.buf[:i], self.buf[i + 2:]
+                break
+            line = bytes(mv[pos:i])
             if line.startswith(b'+CIPRXGET: 2,'):                 # raw data follows: n bytes
-                try:
-                    n = int(line[13:].split(b',')[0])
-                except ValueError:
-                    n = 0
-                if len(rest) < n:
-                    return                                        # wait for the rest
-                self.data.append(rest[:n])
-                self.buf = rest[n:]
+                n = _int(line[13:].split(b',')[0]) or 0
+                if end - i - 2 < n:
+                    break                                         # wait for the rest
+                self.data.append(bytes(mv[i + 2:i + 2 + n]))
+                pos = i + 2 + n
                 continue
-            self.buf = rest
+            pos = i + 2
             s = line.decode('utf-8', 'ignore').strip()
-            if not s:
-                continue
-            if s.startswith('+CMTI:'):                            # new SMS stored: +CMTI: "SM",3
-                try:
-                    self.sms_new.append(int(s.split(',')[1]))
-                except (IndexError, ValueError):
-                    pass
-            elif s == 'RING':
-                self.ringing = True
-            elif s.startswith('+CLIP:'):                          # +CLIP: "+97150...",145,"",0,"",0
-                p = s.split('"')
-                self.caller = p[1] if len(p) > 1 else ''
-                self.ringing = True
-            elif s.startswith('+CIPRXGET: 1') or s in ('Call Ready', 'SMS Ready', 'NO CARRIER', 'BUSY',
-                                                       'NO ANSWER'):
-                pass
-            elif s in ('CLOSED', '+PDP: DEACT'):
-                self.tcp_on = False
-                if s == '+PDP: DEACT':
-                    self.ip = ''
-            else:
+            if s and not self._event(s):
                 self.lines.append(s)
+        rem = end - pos
+        if pos and rem:
+            rx[:rem] = bytes(mv[pos:end])                         # keep the incomplete tail
+        self.n = rem
+
+    def _event(self, s):
+        """Handle an unsolicited line (new SMS, RING / caller ID, link status); False = a reply line."""
+        if s.startswith('+CMTI:'):                                # new SMS stored: +CMTI: "SM",3
+            n = _int(s.split(',')[-1])
+            if n is not None:
+                self.sms_new.append(n)
+        elif s.startswith('+CLIP:'):                              # +CLIP: "+97150...",145,"",0,"",0
+            p = s.split('"')
+            self.caller = p[1] if len(p) > 1 else ''
+            self.ringing = True
+        elif s == 'RING':
+            self.ringing = True
+        elif s in ('CLOSED', '+PDP: DEACT'):
+            self.tcp_on = False
+            if s == '+PDP: DEACT':
+                self.ip = ''
+        elif not (s.startswith('+CIPRXGET: 1') or s in IGNORE):
+            return False
+        return True
 
     async def cmd(self, c, ok=('OK',), timeout=5000, raw=None):
         """Send an AT command and wait for its FINAL result code (ok); returns all reply lines.
@@ -257,8 +271,9 @@ class Gsm(Sms, Gprs, View):
         return self.net
 
     # ---------------------------------------------------------------- main loop
-    async def run(self, command):
-        """command(text) -> reply text, for allowed SMS senders."""
+    async def run(self, command=None):
+        """Task: start the modem, then every second handle calls, received and queued SMS, and refresh the
+        network status every minute. command(text, trusted) -> reply (default: gsm_cmd.sms_command)."""
         try:
             await self._start()
             self.err = ''
@@ -266,6 +281,7 @@ class Gsm(Sms, Gprs, View):
             self.state, self.err = 'failed', str(e)
             print('gsm:', self.err)
             return
+        command = command or _command
         n = 0
         while True:
             await asyncio.sleep(1)
@@ -274,30 +290,11 @@ class Gsm(Sms, Gprs, View):
                 if self.ringing:
                     await asyncio.sleep(1)                        # let +CLIP arrive
                     await self._call(command)
-                while self.sms_new:
-                    num, text = await self._read_sms(self.sms_new.pop(0))
-                    self.sms_in += 1
-                    if self.allowed(num):
-                        print('gsm: SMS from', num, ':', text)
-                        r = command(text)
-                        if r:
-                            self.note('in', num, text, r)
-                            self.queue(r, num)
-                        else:
-                            self.note('deny', num, 'SMS without the code', 'ignored')
-                    else:
-                        print('gsm: SMS from unknown number', num, 'ignored')
-                        self.note('deny', num, 'SMS, unknown number', 'ignored')
-                while self.outbox and self.net:
-                    num, text = self.outbox.pop(0)
-                    for p in ([num] if num else [x.strip() for x in self.c['phones'].split(',') if x.strip()]):
-                        await self.send_sms(p, text)
-                    if not num:                                   # replies are shown with their command
-                        self.note('out', 'all', text)
+                await self._inbox(command)
+                await self._outbox()
                 if n % 60 == 0:
                     await self._status()
                 self.err = ''
             except Exception as e:
                 self.err = str(e)
                 print('gsm:', self.err)
-

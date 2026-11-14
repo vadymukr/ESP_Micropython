@@ -125,62 +125,69 @@ def sms_command(text, trusted=False):
 
 def _ctrl_cmd(app, w, args):
     """HEAT / LIGHT / FAN [value|ON|OFF] (first controller of that kind), CTRL <name> [value|ON|OFF].
-    A value sets the level in manual mode, otherwise the setpoint."""
-    cs = app.ctrl
-    if w == 'CTRL':
-        if not args:
-            return 'Use: CTRL <name> [value|ON|OFF]'
-        key, args = args[0], args[1:]
-    else:
-        key = {'HEAT': 'heater', 'LIGHT': 'light', 'FAN': 'fan'}[w]
-    k = cs.get(key) if cs else None
+    A value sets the level in manual mode, the day level in sun mode, otherwise the setpoint."""
+    if w == 'CTRL' and not args:
+        return 'Use: CTRL <name> [value|ON|OFF]'
+    key, args = (args[0], args[1:]) if w == 'CTRL' else ({'HEAT': 'heater', 'LIGHT': 'light', 'FAN': 'fan'}[w], args)
+    k = app.ctrl.get(key) if app.ctrl else None
     if not k:
         return 'No %s set up (Control panel).' % key.lower()
-    c, arg = k.c, args[0] if args else ''
-    if arg == 'OFF':
-        if c['mode'] != 'off':
-            c['on_mode'] = c['mode']                       # ON brings this mode back
-        c['mode'] = 'off'
-    elif arg == 'ON':
-        c['mode'] = c.get('on_mode', 'pid') if c.get('on_mode') != 'off' else 'manual'
-    elif arg:
-        try:
-            v = float(arg)
-        except ValueError:
-            return 'Use: %s [value|ON|OFF]' % w
-        if c['mode'] == 'curve':
-            return '%s follows its curve - change it in the Control panel.' % c['name']
-        if c['mode'] == 'sun' or (c['mode'] == 'off' and c.get('on_mode') == 'sun'):
-            if not 0 <= v <= 100:
-                return 'Day level 0-100 %.'
-            c['day'], c['mode'] = int(v), 'sun'
-            c['night'] = min(c['night'], c['day'])
-        elif c['mode'] == 'manual' or (c['mode'] == 'off' and c.get('on_mode') == 'manual'):
-            if not 0 <= v <= 100:
-                return 'Level 0-100 %.'
-            c['man'], c['mode'] = int(v), 'manual'
-        else:
-            if c['cut'] is not None and (v >= c['cut'] if c['kind'] != 'fan' else v <= c['cut']):
-                return 'Setpoint must stay inside the cut-off (%g).' % c['cut']
-            c['sp'] = v
-            if c['mode'] == 'off':
-                c['mode'] = c.get('on_mode', 'pid')
+    arg = args[0] if args else ''
+    err = _ctrl_set(k.c, arg, w) if arg else None
+    if err:
+        return err
     if arg:
         from control_cfg import load_cfg, save_cfg
         cfg = load_cfg()
-        cfg['list'] = [dict(c) if e['id'] == c['id'] else e for e in cfg['list']]
+        cfg['list'] = [dict(k.c) if e['id'] == k.c['id'] else e for e in cfg['list']]
         save_cfg(cfg)
         try:
             k.step()                                       # reply with the new state
         except Exception:
             pass
-    lbl, unit = k.src()
+    return _ctrl_reply(k)
+
+
+def _ctrl_set(c, arg, w):
+    """Apply ON / OFF / a value to controller settings c; returns an error text or None."""
+    mode = c['mode'] if c['mode'] != 'off' else c.get('on_mode', 'pid')     # the mode a value applies to
+    if arg == 'OFF':
+        if c['mode'] != 'off':
+            c['on_mode'] = c['mode']                       # ON brings this mode back
+        c['mode'] = 'off'
+        return None
+    if arg == 'ON':
+        c['mode'] = mode if mode != 'off' else 'manual'
+        return None
+    try:
+        v = float(arg)
+    except ValueError:
+        return 'Use: %s [value|ON|OFF]' % w
+    if mode == 'curve':
+        return '%s follows its curve - change it in the Control panel.' % c['name']
+    if mode in ('sun', 'manual'):
+        if not 0 <= v <= 100:
+            return 'Level 0-100 %.'
+        c['mode'] = mode
+        if mode == 'sun':
+            c['day'] = int(v)
+            c['night'] = min(c['night'], c['day'])
+        else:
+            c['man'] = int(v)
+        return None
+    if c['cut'] is not None and (v >= c['cut'] if c['kind'] != 'fan' else v <= c['cut']):
+        return 'Setpoint must stay inside the cut-off (%g).' % c['cut']
+    c['sp'], c['mode'] = v, mode
+    return None
+
+
+def _ctrl_reply(k):
+    """'<name> <state>: <setting>, now <value>, output N%.' for an SMS reply."""
+    c = k.c
+    unit = k.src()[1]
     if unit and unit[0] != '\xb0':
         unit = ' ' + unit
-    return '%s %s: %s%s, output %d%%.' % (c['name'], k.state,
-                                          'level %d%%' % c['man'] if c['mode'] == 'manual' else
-                                          'sun %s-%s day %d%%' % (c['rise'], c['set'], c['day']) if c['mode'] == 'sun' else
-                                          'curve' if c['mode'] == 'curve' else
-                                          'off' if c['mode'] == 'off' else 'set %g%s' % (c['sp'], unit),
-                                          '' if k.v is None else ', now %.1f%s' % (k.v, unit), round(k.outp))
-
+    what = {'manual': 'level %d%%' % c['man'], 'sun': 'sun %s-%s day %d%%' % (c['rise'], c['set'], c['day']),
+            'curve': 'curve', 'off': 'off'}.get(c['mode']) or 'set %g%s' % (c['sp'], unit)
+    now = '' if k.v is None else ', now %.1f%s' % (k.v, unit)
+    return '%s %s: %s%s, output %d%%.' % (c['name'], k.state, what, now, round(k.outp))

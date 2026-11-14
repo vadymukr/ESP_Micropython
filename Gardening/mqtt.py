@@ -168,15 +168,17 @@ class Mqtt:
         return ip, port
 
     # ---------------------------------------------------------------- protocol
-    async def _send(self, pkt):
-        """Write one packet and drain."""
-        self.w.write(pkt)
+    async def _send(self, *parts):
+        """Write one packet given as parts (no joined copy) and drain."""
+        for p in parts:
+            self.w.write(p)
         await asyncio.wait_for(self.w.drain(), 10)
 
     async def _publish(self, topic, payload, retain=False):
         """PUBLISH a payload (QoS 0, optional retain)."""
-        body = _str(topic) + (payload.encode() if isinstance(payload, str) else payload)
-        await self._send(bytes((0x31 if retain else 0x30,)) + _vlen(len(body)) + body)
+        top = _str(topic)
+        pay = payload.encode() if isinstance(payload, str) else payload
+        await self._send(bytes((0x31 if retain else 0x30,)) + _vlen(len(top) + len(pay)), top, pay)
 
     async def _connect(self):
         """Open TCP (WiFi or GPRS), CONNECT with last will, wait for CONNACK."""
@@ -233,40 +235,47 @@ class Mqtt:
         """Task: connect when online, publish state every interval and events at once, reconnect with back-off."""
         while True:
             await asyncio.sleep(1)
-            c = self.cfg
             try:
-                if self.kick or not c['on']:
-                    self.kick = False
-                    await self._close()
-                    if not c['on']:
-                        continue
-                if not c['host'] or not online():
-                    continue
-                now = self.up()
-                if not self.connected:
-                    if now < self.retry:
-                        continue
-                    self.retry = now + self.backoff
-                    self.backoff = min(self.backoff * 2, 300)
-                    await self._connect()
-                while self.events:
-                    await self._publish(self.topic('pump/event'), self.events[0])
-                    self.events.pop(0)
-                if now >= self.next:
-                    self.next = now + c['every']
-                    await self._publish(self.topic('state'), json.dumps((snapshot_fn or snapshot)(self.avg(), c['fields'])), c['retain'])
-                    self._acc_reset(len(self.acc_raw), len(self.acc_g))
-                    self.sent += 1
-                    self.last = now
-                    await self._send(b'\xc0\x00')             # PINGREQ: is the broker really there?
-                    if await asyncio.wait_for(self.r.readexactly(2), 10) != b'\xd0\x00':
-                        raise OSError('broker did not answer the ping')
+                await self._cycle(snapshot_fn or snapshot, online)
             except Exception as e:
                 self.err = ('no answer from the broker (timeout)' if isinstance(e, asyncio.TimeoutError)
                             else str(e) or e.__class__.__name__)
                 print('mqtt:', self.err)
                 self.ip = None                  # look the name up again next time
                 await self._close(False)
+
+    async def _cycle(self, snapshot_fn, online):
+        """One second of the task: (re)connect with back-off, send pump events, the state message when due."""
+        c = self.cfg
+        if self.kick or not c['on']:
+            self.kick = False
+            await self._close()
+        if not (c['on'] and c['host'] and online()):
+            return
+        now = self.up()
+        if not self.connected:
+            if now < self.retry:
+                return
+            self.retry = now + self.backoff
+            self.backoff = min(self.backoff * 2, 300)
+            await self._connect()
+        while self.events:
+            await self._publish(self.topic('pump/event'), self.events[0])
+            self.events.pop(0)
+        if now >= self.next:
+            await self._state(snapshot_fn, now)
+
+    async def _state(self, snapshot_fn, now):
+        """Publish the state message (averages since the last one), then ping: the broker must answer."""
+        c = self.cfg
+        self.next = now + c['every']
+        await self._publish(self.topic('state'), json.dumps(snapshot_fn(self.avg(), c['fields'])), c['retain'])
+        self._acc_reset(len(self.acc_raw), len(self.acc_g))
+        self.sent += 1
+        self.last = now
+        await self._send(b'\xc0\x00')             # PINGREQ: is the broker really there?
+        if await asyncio.wait_for(self.r.readexactly(2), 10) != b'\xd0\x00':
+            raise OSError('broker did not answer the ping')
 
     def state(self):
         """0 off, 1 connected (broker answered the last ping), 2 enabled but not connected."""

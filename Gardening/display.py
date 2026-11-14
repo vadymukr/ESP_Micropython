@@ -117,17 +117,21 @@ class Display:
         while self.devs is devs:
             for p, d in self.touch:
                 if p.value() == 0:
-                    d[8] = time.time() + 60
-                    if d[6]:
-                        d[7] += 1
-                    if d[1]:
-                        try:
-                            self._tick(d, d[0], d[1])
-                        except Exception:
-                            pass
+                    self._touched(d)
                     while p.value() == 0:                  # wait for release
                         await asyncio.sleep_ms(50)
             await asyncio.sleep_ms(80)
+
+    def _touched(self, d):
+        """A touch on screen d: wake it for 60 s, or show the next page if it is on."""
+        d[8] = time.time() + 60
+        if d[6]:
+            d[7] += 1
+        if d[1]:
+            try:
+                self._tick(d, d[0], d[1])
+            except Exception:
+                pass
 
     def _tick(self, d, e, drv):
         """One refresh of screen d: night hours, page rotation, redraw if the page changed."""

@@ -129,7 +129,8 @@ def _device_cards():
 
 
 def frag_live():
-    """/live: alert line + all cards + the 'sampled ... ago' footer (one string)."""
+    """/live: alert line + all cards + the 'sampled ... ago' footer, as a list of parts (streamed by
+    server.send: no joined copy of the whole fragment in RAM)."""
     from bands import STAGES
     worst = {}
     cards = _soil_cards(worst)
@@ -138,7 +139,7 @@ def frag_live():
     note = ' &middot; %s' % esc(b.msg) if b.msg and uptime() < 3600 else ''
     out.append('</div><p class="muted">Sampled %s &middot; <span x-text="age"></span> s ago &middot; stage: %s%s</p>'
                '<i hidden x-init="seen()"></i>' % (stamp() if time_ok() else '(clock not set)', esc(STAGES[b.stage][0]), note))
-    return ''.join(out)
+    return out
 
 
 def _rec_lines(r):
@@ -184,7 +185,8 @@ def _sys_line():
 
 
 def frag_status(msg=''):
-    """/status: Alpine sync tag (recording, clock, flash, MQTT, hidden panels) + recording + system lines."""
+    """/status: Alpine sync tag (recording, clock, flash, MQTT, hidden panels) + recording + system lines
+    (list of parts, streamed)."""
     r, mqtt = app.rec, app.mqtt
     util.heap_note()
     out = ['<i hidden x-init="sync(%d,%d,%d,%d,$el.dataset.mqt,$el.dataset.off)" data-mqt="%s" data-off="%s"></i>'
@@ -196,7 +198,7 @@ def frag_status(msg=''):
     if r.msg:
         out.append('<p class="muted">%s</p>' % esc(r.msg))
     out.append(_sys_line())
-    return ''.join(out)
+    return out
 
 
 def ui(name, fn, *args):

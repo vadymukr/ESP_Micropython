@@ -194,6 +194,12 @@ free RAM). The frozen list is `firmware/frozen.txt`, read by both `manifest.py` 
 - Every module starts with a comment saying what it does and a `Spec:` link to this document.
 - Every function and class has a docstring (one line if it says enough).
 - Lines up to 120 characters; long HTML string literals in the panels may exceed it.
-- MicroPython compatibility: no `str.isalnum` / `str.capitalize`, no tuple in `startswith`,
-  `asyncio` with a `uasyncio` fallback, `time.ticks_*` for intervals.
+- MicroPython compatibility: no `str.isalnum` / `str.capitalize`, no tuple in `startswith`, no default
+  in `next()`, no `del` of a `bytearray` slice; `asyncio` with a `uasyncio` fallback, `time.ticks_*`
+  for intervals.
+- Memory in loops that run often: no allocation when nothing changes (floats are heap objects on the
+  ESP32), fixed `bytearray` buffers with `memoryview` slices for I/O (`readinto`), parts written one by
+  one instead of joined, generators inside `sum` / `any` / `all`, `array('f')` for stored floats.
+- Flat code: guard clauses and early returns instead of nested `if`; dispatch dicts for actions; a
+  function per step when a loop body grows.
 - Check: `pyflakes *.py web/*.py` (only the re-exports in `web/app.py` may be reported).

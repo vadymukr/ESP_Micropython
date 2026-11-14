@@ -66,6 +66,30 @@ class Sms:
         from gsm_cmd import check
         check(self, pcts)
 
+    async def _inbox(self, command):
+        """Read the new SMS: allowed senders get the command's reply, others are logged and ignored."""
+        while self.sms_new:
+            num, text = await self._read_sms(self.sms_new.pop(0))
+            self.sms_in += 1
+            if not self.allowed(num):
+                print('gsm: SMS from unknown number', num, 'ignored')
+                self.note('deny', num, 'SMS, unknown number', 'ignored')
+                continue
+            print('gsm: SMS from', num, ':', text)
+            r = command(text)
+            self.note(*(('in', num, text, r) if r else ('deny', num, 'SMS without the code', 'ignored')))
+            if r:
+                self.queue(r, num)
+
+    async def _outbox(self):
+        """Send the queued SMS (to one number, or to all allowed numbers) while on the network."""
+        while self.outbox and self.net:
+            num, text = self.outbox.pop(0)
+            for p in [num] if num else filter(None, map(str.strip, self.c['phones'].split(','))):
+                await self.send_sms(p, text)
+            if not num:                                   # replies are shown with their command
+                self.note('out', 'all', text)
+
     async def _call(self, command):
         """Ringing: hang up, then (allowed number, once per call) do the configured action."""
         num = self.caller or ''

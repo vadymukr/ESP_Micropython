@@ -5,23 +5,16 @@
 
 
 def pages_of(e):
-    """The page list of a display: ('soil', i), ('air', 0)..."""
+    """The page list of a display: ('soil', i), ('air', 0)... Kinds with one page per item are expanded,
+    pages of parts that are not running are left out; at least the clock page."""
     import app
+    many = {'soil': len(app.sens.ch), 'gen': len(app.sens.gch), 'ctrl': len(app.ctrl.ctls) if app.ctrl else 0}
+    skip = {'air': app.sens.t is None, 'pump': not app.pump, 'batt': not app.batt}
     out = []
     for k in e['pages']:
-        if k == 'soil':
-            out += [('soil', i) for i in range(len(app.sens.ch))]
-        elif k == 'gen':
-            out += [('gen', j) for j in range(len(app.sens.gch))]
-        elif k == 'ctrl':
-            out += [('ctrl', j) for j in range(len(app.ctrl.ctls) if app.ctrl else 0)]
-        elif k == 'air' and app.sens.t is None:
-            continue
-        elif k == 'pump' and not app.pump:
-            continue
-        elif k == 'batt' and not app.batt:
-            continue
-        else:
+        if k in many:
+            out += [(k, i) for i in range(many[k])]
+        elif not skip.get(k):
             out.append((k, 0))
     return out or [('clock', 0)]
 

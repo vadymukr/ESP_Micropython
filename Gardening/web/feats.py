@@ -141,10 +141,10 @@ def mqtt_start():
 def gsm_start():
     """Start the modem task (boot, or switched on from the page) if a modem is wired."""
     if app.gsm is None and getattr(S, 'MODEM_TX', None) is not None:
-        from gsm import Gsm, sms_command
+        from gsm import Gsm
         from gsm_cfg import load_cfg
         app.gsm = Gsm(load_cfg(), app.sens)
-        asyncio.create_task(app.gsm.run(sms_command))
+        asyncio.create_task(app.gsm.run())
         if app.mqtt:
             app.mqtt.gprs = app.gsm
     return app.gsm

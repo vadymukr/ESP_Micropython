@@ -13,16 +13,16 @@ class Tcp:
 
     def __init__(self, g):
         """Stream over the GPRS link of modem g."""
-        self.g, self.wb, self.rb = g, b'', b''
+        self.g, self.wb, self.rb = g, [], b''
 
     def write(self, b):
-        """Buffer bytes (sent by drain())."""
-        self.wb += b
+        """Buffer bytes (sent by drain() as one TCP send)."""
+        self.wb.append(b)
 
     async def drain(self):
-        """Send the buffered bytes."""
+        """Send the buffered parts (one join: AT+CIPSEND needs the total length)."""
         if self.wb:
-            b, self.wb = self.wb, b''
+            b, self.wb = b''.join(self.wb), []
             await self.g.send(b)
 
     async def readexactly(self, n):

@@ -69,6 +69,8 @@ class Tft:
         self.cmd(0x36, bytes((mad | (0x08 if e.get('bgr', ili or t == 'st7735-80') else 0),)))
         self.cmd(0x21 if e.get('inv', self.st7789 or t == 'st7735-80') else 0x20)
         self.cmd(0x13)
+        self.buf = bytearray(2048)                         # strips and colour blocks, reused
+        self.fill_c = None                                 # colour now in the first 1 KB of buf
         self.fill(0)
         self.cmd(0x29)                                     # display on
         self.pal = framebuf.FrameBuffer(bytearray(4), 2, 1, framebuf.RGB565)
@@ -108,17 +110,21 @@ class Tft:
         return COLORS.get(name, 0xFFFF)
 
     def fill_rect(self, x, y, w, h, c):
-        """Filled rectangle, clipped to the screen, sent in 1 KB chunks."""
+        """Filled rectangle, clipped to the screen, sent from a reused 1 KB block of colour c."""
         x, y = max(0, x), max(0, y)
         w, h = min(w, self.w - x), min(h, self.h - y)
         if w <= 0 or h <= 0:
             return
+        if c != self.fill_c:                               # rebuild the colour block only on a new colour
+            self.fill_c = c
+            hi, lo = c >> 8, c & 0xFF
+            for i in range(0, 1024, 2):
+                self.buf[i], self.buf[i + 1] = hi, lo
         self._win(x, y, w, h)
-        n = w * h
-        chunk = bytes((c >> 8, c & 0xFF)) * min(n, 512)
+        mv, n = memoryview(self.buf), w * h * 2
         while n > 0:
-            k = min(n, 512)
-            self.spi.write(chunk if k == 512 else chunk[:2 * k])
+            k = min(n, 1024)
+            self.spi.write(mv[:k])
             n -= k
         self._end()
 
@@ -127,43 +133,42 @@ class Tft:
         self.fill_rect(0, 0, self.w, self.h, c)
 
     def draw(self, s, x, y, font=None, fg=0xFFFF, bg=0):
-        """Text at x, y (top left), opaque; font = gfont.Font or None (built-in 8x8). Returns the width."""
+        """Text at x, y (top left), opaque; font = gfont.Font or None (built-in 8x8). Returns the width.
+        Characters are rendered in strips of the reused 2 KB buffer (no allocation per glyph)."""
         self.pal.pixel(0, 0, _sw(bg))
         self.pal.pixel(1, 0, _sw(fg))
+        self.fill_c = None                                 # the strip buffer overwrites the colour block
         x0 = x
         if font is None:
             for i in range(0, len(s), 8):                  # 8 characters = 64x8 px strip (1 KB)
                 part = s[i:i + 8]
                 w = 8 * len(part)
-                b = bytearray(w * 8 * 2)
-                fb = framebuf.FrameBuffer(b, w, 8, framebuf.RGB565)
+                fb = framebuf.FrameBuffer(self.buf, w, 8, framebuf.RGB565)
                 fb.fill(_sw(bg))
                 fb.text(part, 0, 0, _sw(fg))
-                self._blit(b, x, y, w, 8)
+                self._blit(w, x, y, 8)
                 x += w
             return x - x0
         h = font.h
         for ch in s:
-            w, g = font.glyph(ch)
             if x >= self.w:
                 break
+            w, g = font.glyph(ch)
             src = framebuf.FrameBuffer(g, w, h, framebuf.MONO_HLSB)
             rows = max(1, 1024 // w)                       # strip of <= 2 KB
-            b = bytearray(w * rows * 2)
-            fb = framebuf.FrameBuffer(b, w, rows, framebuf.RGB565)
+            fb = framebuf.FrameBuffer(self.buf, w, rows, framebuf.RGB565)
             for r0 in range(0, h, rows):
-                n = min(rows, h - r0)
                 fb.blit(src, 0, -r0, -1, self.pal)
-                self._blit(b, x, y + r0, w, n)
+                self._blit(w, x, y + r0, min(rows, h - r0))
             x += w
         return x - x0
 
-    def _blit(self, b, x, y, w, h):
-        """Send the first h rows of an RGB565 strip w px wide, clipped to the screen."""
+    def _blit(self, w, x, y, h):
+        """Send the first h rows of the strip in self.buf (w px wide), clipped to the screen."""
         if x >= self.w or y >= self.h or x < 0 or y < 0:
             return
         cw, ch = min(w, self.w - x), min(h, self.h - y)
-        mv = memoryview(b)
+        mv = memoryview(self.buf)
         self._win(x, y, cw, ch)
         if cw == w:
             self.spi.write(mv[:w * ch * 2])

@@ -85,7 +85,7 @@ def handle(method, path, f):
     if path == '/gsm/test':
         if not g:
             return frag('Modem not running.')
-        from gsm import status_text
+        from gsm_cmd import status_text
         g.queue('Garden logger test SMS. ' + status_text()[:100])
         return frag('Test SMS queued to all allowed numbers.', True)
     if path != '/gsm/save':
