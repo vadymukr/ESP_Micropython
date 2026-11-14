@@ -1,6 +1,8 @@
 # Settings for the garden moisture logger web app (ESP32 WROOM, MicroPython 1.29)
 
-# Soil sensors: (gpio, dry_raw, wet_raw, name). Raw = 12-bit ADC average, 11 dB attenuation.
+# Soil sensors TEMPLATE: (gpio, dry_raw, wet_raw, name). Used only to create the sensor list the first
+# time; after that sensors are added / calibrated / removed from the dashboard Sensors panel
+# (/data/sensors.json). Raw = 12-bit ADC average, 11 dB attenuation.
 # Calibrated 2026-11-01: dry = room air 24.0 C / 43% RH, wet = water to the edge line.
 SENSORS = (
     (34, 3390, 1669, 'Sensor A'),   # dry / wet calibrated 2026-11-02 on board 7c:9e:bd:48:2c:c0
@@ -48,7 +50,7 @@ DRAIN_H = 6               # above F+5 within this many hours after watering = "d
 # Indicator LEDs for one sensor (leds.py). () = no LEDs, module not loaded.
 LED_PINS = (25, 26, 27, 14)   # fully watered, normal, water soon, water now (GPIO -> resistor -> LED -> GND)
 LED_ACTIVE_HIGH = True
-LED_SENSOR = 0                # index in SENSORS: 0 = Sensor A
+LED_SENSOR = 0                # which soil sensor the LEDs show: 0 = the first soil sensor in the list
 LED_MODE = 'on'               # default 'off' | 'on' | 'eco'; the dashboard saves changes to /data/leds.json
 
 # Water pump (pump.py). None = no pump, module not loaded. Mode, run times, schedule and the
@@ -73,13 +75,16 @@ MQTT_CLIENT_ID = ''           # '' = garden-<last 3 bytes of the chip id>
 MQTT_TOPIC = 'garden'         # topic prefix: <prefix>/state, /pump/event, /status
 MQTT_EVERY_S = 60             # publish interval (average of the samples since the previous publish)
 MQTT_RETAIN = True
+MQTT_FIELDS = ()              # what to send: () = everything; else e.g. ('s0', 'batt') - 's0','s1' soil
+                              # sensors, 'air', 'pump' (state + events), 'batt', 'board' (WiFi, heap, uptime)
 
-# Battery / supply monitor (battery.py). None = disabled, module not loaded.
-BATT_PIN = None               # ADC1 pin with the divider, e.g. 36 (VP) or 39 (VN)
-BATT_RATIO = 5.545            # (R1 + R2) / R2 - 100k / 22k for 12 V; 10k / 10k = 2.0 for 5 V
-BATT_CAL = 1.0                # fine trim: multimeter voltage / shown voltage
-BATT_LOW_V = 11.8             # 12 V lead-acid: 11.8 low, 11.4 critical; 5 V supply: 4.6 / 4.4
-BATT_CRIT_V = 11.4
+# Battery / supply monitor (battery.py) - template defaults only; the dashboard Battery panel
+# (/data/batt.json) overrides them: on/off, pin, input 5 V / 12 V / custom, R1/R2, alarms, calibration.
+BATT_PIN = None               # None = off by default; ADC1 pin with the divider: 32, 33, 36 (VP) or 39 (VN)
+BATT_PRESET = '5'             # default input: '5' V supply (100k/68k); '12' V battery (100k/15k); 'custom'
+BATT_CAL = 1.0                # multimeter voltage / shown voltage (set by "Calibrate" on the page)
+BATT_LOW_V = 4.6              # alarms for the default preset; 12 V lead-acid: 11.8 / 11.4
+BATT_CRIT_V = 4.4
 BATT_EVERY_S = 30             # read interval
 
 # Power management (power.py). False = module not loaded: always on, 160 MHz, as before.

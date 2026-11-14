@@ -46,7 +46,8 @@ def quick():
             batt.read()
             low = batt.state != 'ok'
         if leds:
-            leds.flash_once(b.band(S.LED_SENSOR, pcts[S.LED_SENSOR]), low)
+            i = min(S.LED_SENSOR, len(pcts) - 1)
+            leds.flash_once(b.band(i, pcts[i]), low)
         print('quick: %s | rec %s' % (' '.join('%.0f%%' % p for p in pcts), r.fname if r.resume else '-'))
         pwr.deepsleep(pwr.sleep_secs(low, quick=True))
     except Exception as e:

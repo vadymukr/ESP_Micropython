@@ -31,11 +31,14 @@ def frag_tail():
     rows = [l for l in lines if l and not l.startswith('timestamp')][-8:]
     if not rows:
         return '<p class="muted"><code>%s</code>: no rows yet (first row after one interval).</p>' % esc(name)
-    keep = [i for i, h in enumerate(head) if h == 'timestamp' or h.startswith('air') or h.endswith('_pct')]
+    keep = [i for i, h in enumerate(head) if h == 'timestamp' or h.startswith('air') or h.endswith('_pct')
+            or (h[:1] == 'S' and '_' in h)]
+    names = {'%s_%s' % (g[6], g[2]): '%s %s' % (esc(g[3]), esc(g[4])) for g in app.sens.gch}
     titles = {'timestamp': 'Time', 'air_temp_c': '&deg;C', 'air_rh_pct': 'RH %', 'air_hpa': 'hPa'}
     out = ['<p class="muted"><code>%s</code></p><table><tr>' % esc(name)]
     for i in keep:
-        out.append('<th>%s</th>' % titles.get(head[i], head[i].replace('_pct', ' %').replace('gpio', 'GPIO')))
+        out.append('<th>%s</th>' % (titles.get(head[i]) or names.get(head[i]) or
+                                   head[i].replace('_pct', ' %').replace('gpio', 'GPIO')))
     out.append('</tr>')
     for l in reversed(rows):
         v = l.split(',')

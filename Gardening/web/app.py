@@ -124,12 +124,32 @@ def parse_qs(s):
 # ---------------------------------------------------------------- sensors
 class Sensors:
     def __init__(self):
-        self.ch = []
-        for pin, dry, wet, name in S.SENSORS:
-            a = ADC(Pin(pin))
-            a.atten(ADC.ATTN_11DB)
-            a.width(ADC.WIDTH_12BIT)
-            self.ch.append((pin, a, dry, wet, name))
+        import sys
+        import sensors as R                 # registry: read the list, then release the module
+        self.reg = R.load()
+        R = None
+        del sys.modules['sensors']
+        self.ch = []                         # soil sensors: (pin, adc, dry, wet, name, id)
+        self.gen = []                        # other sensors: driver objects (drv_<type>.py)
+        self.gch = []                        # their channels: (driver idx, chan idx, key, label, unit, dec, id)
+        self.bad = []                        # (name, error) of sensors that did not start
+        for e in self.reg:
+            try:
+                if e['type'] == 'soil':
+                    self.ch.append(self._soil(e))
+                else:
+                    d = __import__('drv_' + e['type']).Driver(e)
+                    gi = len(self.gen)
+                    self.gen.append(d)
+                    for k, (key, label, unit, dec) in enumerate(d.chans()):
+                        self.gch.append((gi, k, key, label, unit, dec, e['id']))
+            except Exception as ex:
+                print('sensor %s not started: %r' % (e.get('name'), ex))
+                self.bad.append((e.get('name', '?'), str(ex)))
+        if not self.ch:                      # bands / pump need a soil sensor: fall back to the template
+            pin, dry, wet, name = S.SENSORS[0]
+            self.ch.append(self._soil({'pin': pin, 'dry': dry, 'wet': wet, 'name': name, 'id': 'S1'}))
+        self.gval = [None] * len(self.gch)
         self.raw = [0] * len(self.ch)
         self.t = self.rh = self.p = None
         self.updated = 0
@@ -142,6 +162,13 @@ class Sensors:
         self._next_try = 0                   # uptime() of the next detect attempt
         self._clim_init()
         self.acc_reset()
+
+    @staticmethod
+    def _soil(e):
+        a = ADC(Pin(e['pin']))
+        a.atten(ADC.ATTN_11DB)
+        a.width(ADC.WIDTH_12BIT)
+        return (e['pin'], a, e['dry'], e['wet'], e['name'], e['id'])
 
     def _bus_reset(self):
         """Free a bus held low by a half-reset sensor: clock SCL up to 9 times until SDA is released."""
@@ -177,6 +204,8 @@ class Sensors:
 
     def acc_reset(self):
         self.acc_raw = [0] * len(self.ch)
+        self.acc_g = [0.0] * len(self.gch)
+        self.acc_gn = [0] * len(self.gch)
         self.acc_n = 0
         self.acc_t = self.acc_rh = self.acc_p = 0.0
         self.acc_tn = self.acc_hn = self.acc_pn = 0
@@ -197,6 +226,16 @@ class Sensors:
                 s += a.read()
                 time.sleep_us(300)
             self.raw[i] = s // S.ADC_SAMPLES
+        if self.gen:                         # other sensors (registry drivers)
+            j = 0
+            for d in self.gen:
+                try:
+                    vals = d.read()
+                except Exception:
+                    vals = None
+                for v in (vals or [None] * len(d.chans())):
+                    self.gval[j] = v
+                    j += 1
         if sw:
             pwr.sensors(False)
         # Moisture is read above regardless; the air sensor must never hold up the loop.
@@ -219,6 +258,10 @@ class Sensors:
                     self._backoff = min(self._backoff * 2, S.AIR_RETRY_S[1])
         for i, r in enumerate(self.raw):
             self.acc_raw[i] += r
+        for j, v in enumerate(self.gval):
+            if v is not None:
+                self.acc_g[j] += v
+                self.acc_gn[j] += 1
         self.acc_n += 1
         if self.t is not None:
             self.acc_t += self.t
@@ -271,6 +314,8 @@ class Recorder:
         for c in self.sens.ch:
             cols.append('gpio%d_raw' % c[0])
             cols.append('gpio%d_pct' % c[0])
+        for g in self.sens.gch:
+            cols.append('%s_%s' % (g[6], g[2]))      # e.g. S3_v (registry sensor id + channel)
         cols.append('samples')
         return ','.join(cols) + '\n'
 
@@ -317,6 +362,8 @@ class Recorder:
             r = s.acc_raw[i] / s.acc_n
             p.append('%.1f' % r)
             p.append('%.1f' % s.pct(r, c[2], c[3]))
+        for j, g in enumerate(s.gch):
+            p.append(('%%.%df' % g[5]) % (s.acc_g[j] / s.acc_gn[j]) if s.acc_gn[j] else '')
         p.append(str(s.acc_n))
         with open(self.path(), 'a') as f:
             f.write(','.join(p) + '\n')
@@ -624,6 +671,15 @@ def frag_live():
         alert = ('<div class="alert now">Hot: %.0f &deg;C &ndash; above 32 &deg;C cucumbers drop flowers. '
                  'Shade 08:00&ndash;12:00.</div>' % s.t)
     out = [alert, '<div class="grid">'] + cards
+    for j, g in enumerate(s.gch):
+        v = s.gval[j]
+        out.append('<div class="card"><h3><span>%s <small>%s</small></span></h3><div class="big">%s<small>%s</small></div>'
+                   '<p class="muted">%s</p></div>'
+                   % (esc(g[3]), g[6], '&ndash;' if v is None else ('%%.%df' % g[5]) % v, esc(g[4]),
+                      s.gen[g[0]].info()))
+    for name, err in s.bad:
+        out.append('<div class="card"><h3>%s</h3><div class="big">&ndash;</div><p class="warn">not started: %s</p></div>'
+                   % (esc(name), esc(err)))
     if s.t is not None:
         extra = []
         if s.rh is not None:
@@ -648,8 +704,9 @@ def frag_live():
         else:
             k, lbl = {'ok': ('good', 'OK'), 'low': ('soon', 'Low'), 'crit': ('now', 'Critical')}[batt.state]
             out.append('<div class="card band %s"><h3><span>Battery <small>GPIO%d</small></span><span class="badge">%s</span></h3>'
-                       '<div class="big">%.2f<small>V</small></div><p class="muted">low %.1f V &middot; critical %.1f V</p></div>'
-                       % (k, batt.pin, lbl, batt.v, batt.low_v, batt.crit_v))
+                       '<div class="big">%.2f<small>V</small></div><p class="muted">low %.1f V &middot; critical %.1f V'
+                       ' &middot; pin %.2f V</p></div>'
+                       % (k, batt.pin, lbl, batt.v, batt.low_v, batt.crit_v, batt.pin_v or 0))
     if pump:
         out.append('<div class="card band %s"><h3><span>Pump <small>GPIO%d</small></span><span class="badge">%s</span></h3>'
                    '<p>%s</p><p class="muted">today %d of %d s</p></div>'
@@ -760,7 +817,7 @@ STATIC = {
 }
 POLLS = ('/live', '/status', '/tail', '/files', '/wifi/state', '/favicon.ico', '/htmx.min.js', '/alpine.min.js')
 KNOWN = ('/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
-         '/pump', '/mqtt')
+         '/pump', '/mqtt', '/batt', '/sensors')
 CAPTIVE = ('/generate_204', '/gen_204', '/hotspot-detect.html', '/library/test/success.html',
            '/ncsi.txt', '/connecttest.txt', '/redirect', '/success.txt', '/canonical.html')
 
@@ -793,9 +850,9 @@ async def route(w, method, path, q, f):
     if path == '/files':
         return await send(w, ui('ui_files', 'frag_files'))
     seg = path.split('/')[1]
-    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt'):
+    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors'):
         import sys
-        name = 'ui_pump' if seg == 'pump' else 'ui_mqtt' if seg == 'mqtt' else 'ui_cfg'
+        name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors'}.get(seg, 'ui_cfg')
         gc.collect()                           # settings panels: loaded per request, then released
         mod = __import__(name)
         try:
@@ -916,34 +973,65 @@ async def handle(r, w):
 sens = rec = net = bands = leds = batt = pwr = pump = mqtt = None
 
 
-def snapshot(avg):
-    """Every value as a dict, for MQTT <base>/state. avg = mqtt.avg(): soil raw / air averaged over
-    all samples since the previous publish (falls back to the latest reading if there are none)."""
+def snapshot(avg, fields):
+    """The selected values as a dict, for MQTT <base>/state. avg = mqtt.avg(): soil raw / air averaged over
+    all samples since the previous publish (falls back to the latest reading if there are none).
+    fields: 's0', 's1'.. (soil sensors), 'air', 'pump', 'batt', 'board'. An unselected soil sensor is
+    sent as null so the others keep their position in the list."""
     from bands import BANDS
-    raws, t, rh, hpa, n = avg
+    raws, t, rh, hpa, n, gv = avg
     if raws is None:
-        raws, t, rh, hpa, n = list(sens.raw), sens.t, sens.rh, sens.p, 1
-    d = {'time': stamp() if time_ok() else None, 'uptime_s': uptime(), 'samples': n}
+        raws, t, rh, hpa, n, gv = list(sens.raw), sens.t, sens.rh, sens.p, 1, list(sens.gval)
+    allf = not fields                        # empty selection = everything
+    d = {'time': stamp() if time_ok() else None, 'samples': n}
     ss = []
     for i, c in enumerate(sens.ch):
+        if not allf and 'sen_' + c[5] not in fields:
+            ss.append(None)
+            continue
         p = sens.pct(raws[i], c[2], c[3])
         k = bands.band(i, p)
-        ss.append({'name': c[4], 'gpio': c[0], 'raw': round(raws[i], 1), 'pct': round(p, 1), 'band': k,
+        ss.append({'id': c[5], 'name': c[4], 'gpio': c[0], 'raw': round(raws[i], 1), 'pct': round(p, 1), 'band': k,
                    'band_text': BANDS[k], 'full_F': bands.full[i], 'water_at': bands.full[i] - bands.w(),
                    'dry_rate_pts_day': round(bands.rate[i] * 24, 1), 'rate_measured': bands.rate_ok[i]})
-    d['soil'] = ss
-    d['air'] = {'temp_c': None if t is None else round(t, 2), 'rh_pct': None if rh is None else round(rh, 1),
-                'hpa': None if hpa is None else round(hpa, 1), 'sensor': sens.clim_name if sens.clim else None}
-    if pump:
+    if any(ss):
+        d['soil'] = ss
+    gs = {}
+    for j, g in enumerate(sens.gch):
+        if allf or 'sen_' + g[6] in fields:
+            v = gv[j] if j < len(gv) else None
+            key = g[6] if len([x for x in sens.gch if x[6] == g[6]]) == 1 else g[6] + '.' + g[2]
+            gs[key] = {'name': g[3], 'value': None if v is None else round(v, g[5]), 'unit': g[4]}
+    if gs:
+        d['sensors'] = gs
+    if allf or 'air' in fields:
+        d['air'] = {'temp_c': None if t is None else round(t, 2), 'rh_pct': None if rh is None else round(rh, 1),
+                    'hpa': None if hpa is None else round(hpa, 1), 'sensor': sens.clim_name if sens.clim else None}
+    if pump and (allf or 'pump' in fields):
         c = pump.cfg
         d['pump'] = {'on': pump.running, 'busy': pump.busy(), 'mode': c['mode'], 'fault': c['fault'] or None,
                      'today_s': c['day_s'], 'day_max_s': S.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty()}
-    if batt:
-        d['battery'] = {'v': batt.v, 'state': batt.state}
-    d['recording'] = rec.fname if rec.active else None
-    d['wifi_rssi'] = net.sta.status('rssi') if net.sta.isconnected() else None
-    d['heap_free'] = gc.mem_free()
+    if batt and (allf or 'batt' in fields):
+        d['battery'] = {'v': None if batt.v is None else round(batt.v, 2), 'state': batt.state}
+    if allf or 'board' in fields:
+        d['uptime_s'] = uptime()
+        d['recording'] = rec.fname if rec.active else None
+        d['wifi_rssi'] = net.sta.status('rssi') if net.sta.isconnected() else None
+        d['heap_free'] = gc.mem_free()
     return d
+
+
+def restart_soon(secs=2):
+    """Restart the board after the current reply was sent (sensor list changed: everything is
+    rebuilt from the saved settings). The pump is switched off first."""
+    async def _go():
+        await asyncio.sleep(secs)
+        try:
+            _before_sleep()
+        except Exception:
+            pass
+        machine.reset()
+    asyncio.create_task(_go())
 
 
 def mqtt_start():
@@ -977,9 +1065,9 @@ async def sample_loop():
             if pump:
                 pump.update(pcts)
             if mqtt:
-                mqtt.feed(sens.raw, sens.t, sens.rh, sens.p)
+                mqtt.feed(sens.raw, sens.t, sens.rh, sens.p, sens.gval)
             if leds:
-                i = S.LED_SENSOR
+                i = min(S.LED_SENSOR, len(pcts) - 1)
                 leds.show(bands.band(i, pcts[i]))
             if batt and uptime() >= batt_next:
                 batt_next = uptime() + S.BATT_EVERY_S
@@ -1021,6 +1109,28 @@ def _before_sleep():
         leds._set(None)
 
 
+def batt_enabled():
+    """Battery panel setting (batt.json) without importing battery.py; else the settings.py template."""
+    try:
+        with open(S.DATA_DIR + '/batt.json') as f:
+            return bool(json.load(f).get('on'))
+    except (OSError, ValueError):
+        return getattr(S, 'BATT_PIN', None) is not None
+
+
+def batt_apply():
+    """(Re)create the monitor from the saved settings, or remove it when switched off."""
+    global batt
+    from battery import Battery, load_cfg
+    c = load_cfg()
+    batt = Battery(c) if c['on'] else None
+    if batt:
+        batt.read()
+    if leds:
+        leds.batt = batt.state if batt else 'ok'
+    return batt
+
+
 def leds_mode():
     """Saved LED mode (leds.json) without importing leds.py."""
     try:
@@ -1051,9 +1161,8 @@ def _optional():
     if S.LED_PINS and leds_mode() != 'off':     # LEDs off: module not loaded (RAM)
         from leds import Leds
         leds = Leds(S.LED_PINS, S.LED_ACTIVE_HIGH)
-    if S.BATT_PIN is not None:
-        from battery import Battery
-        batt = Battery(S.BATT_PIN, S.BATT_RATIO, S.BATT_LOW_V, S.BATT_CRIT_V, S.BATT_CAL)
+    if batt_enabled():                         # off: battery.py not loaded
+        batt_apply()
 
 
 def main():

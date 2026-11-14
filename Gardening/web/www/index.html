@@ -100,6 +100,13 @@ function app(){return{
 </section>
 
 <section>
+  <details hx-get="/sensors" hx-trigger="toggle once" hx-target="#sensors">
+    <summary>Sensors &ndash; add, calibrate, remove</summary>
+    <div id="sensors"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
   <details hx-get="/bands" hx-trigger="toggle once" hx-target="#bands">
     <summary>Watering bands &ndash; settings</summary>
     <div id="bands"><p class="muted">Loading&hellip;</p></div>
@@ -118,6 +125,13 @@ function app(){return{
   <details hx-get="/mqtt" hx-trigger="toggle once" hx-target="#mqtt">
     <summary>MQTT</summary>
     <div id="mqtt"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/batt" hx-trigger="toggle once" hx-target="#batt">
+    <summary>Battery / supply monitor</summary>
+    <div id="batt"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 

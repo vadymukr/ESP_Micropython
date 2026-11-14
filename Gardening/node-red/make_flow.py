@@ -35,7 +35,7 @@ add('page', 'ui-page', name='Garden', ui=nid('base'), path='/garden', icon='spro
     theme=nid('theme'), order=1, className='', visible='true', disabled='false')
 for k, (name, order, width) in {'g_soil': ('Soil moisture', 1, '6'), 'g_air': ('Air', 2, '6'),
                                 'g_pump': ('Pump', 3, '6'), 'g_board': ('Board', 4, '6'),
-                                'g_log': ('Pump log', 5, '12')}.items():
+                                'g_log': ('Pump log', 5, '12'), 'g_all': ('All sensors', 6, '12')}.items():
     add(k, 'ui-group', name=name, page=nid('page'), width=width, height='1', order=order, showTitle=True,
         className='', visible='true', disabled='false')
 add('notify', 'ui-notification', ui=nid('base'), position='top right', colorDefault=False, color='#c63c2c',
@@ -59,29 +59,39 @@ add('in_status', 'mqtt in', 140, 640, [['f_status', 'f_alerts']], name='garden/s
     qos='0', datatype='utf8', broker=nid('broker'), nl=False, rap=True, rh=0, inputs=0)
 
 # ---------------------------------------------------------------- split the state JSON
-OUTS = ['gA', 'gB', 'tA', 'tB', 'chSoil', 'gT', 'gRH', 'chAir', 'tPump', 'tBoard']
+OUTS = ['gA', 'gB', 'tA', 'tB', 'chSoil', 'gT', 'gRH', 'chAir', 'tPump', 'tBoard', 'tblAll', 'chAll']
 STATE_JS = r'''// garden/state -> one message per widget
+// Items can be switched off on the board (MQTT panel "Data to send"): an unticked soil sensor is
+// null in its slot, other groups (air, pump, battery, board info) are simply missing.
 const d = msg.payload;
-if (typeof d !== 'object' || !d.soil) return null;
+if (typeof d !== 'object' || d === null) return null;
 const ts = Date.now();
-const sA = d.soil[0] || {}, sB = d.soil[1] || {};
+const soil = d.soil || [];
+const sA = soil[0] || {}, sB = soil[1] || {};
 const txt = s => s.name === undefined ? '-' :
     `${s.band_text} · F ${s.full_F}% · water at ${s.water_at}% · ` +
     `−${s.dry_rate_pts_day} pts/day${s.rate_measured ? '' : ' (est.)'} · raw ${s.raw}`;
-const soilChart = d.soil.map(s => ({topic: s.name, payload: s.pct, timestamp: ts}));
+const soilChart = soil.filter(s => s).map(s => ({topic: s.name, payload: s.pct, timestamp: ts}));
 const a = d.air || {};
 const airChart = [];
 if (a.temp_c != null) airChart.push({topic: 'Air °C', payload: a.temp_c, timestamp: ts});
 if (a.rh_pct != null) airChart.push({topic: 'Air RH %', payload: a.rh_pct, timestamp: ts});
 const p = d.pump;
-const pump = !p ? 'no pump configured' :
+const pump = !p ? 'not sent' :
     (p.fault ? '⚠ LOCKED: ' + p.fault :
      (p.on ? 'RUNNING' : (p.busy ? 'watching moisture' : 'ready')) +
      ` · mode ${p.mode} · today ${p.today_s} / ${p.day_max_s} s` + (p.tank_empty ? ' · TANK EMPTY' : ''));
-const board = `${d.time || 'clock not set'} · ${d.samples} samples averaged · ` +
-    `WiFi ${d.wifi_rssi == null ? '-' : d.wifi_rssi + ' dBm'} · heap ${Math.round(d.heap_free / 1024)} KB` +
+const board = `${d.time || 'clock not set'} · ${d.samples} samples averaged` +
+    (d.wifi_rssi != null ? ` · WiFi ${d.wifi_rssi} dBm` : '') +
+    (d.heap_free != null ? ` · heap ${Math.round(d.heap_free / 1024)} KB` : '') +
     (d.battery ? ` · battery ${d.battery.v} V (${d.battery.state})` : '') +
     (d.recording ? ` · recording ${d.recording}` : '');
+// every sensor on the board, however many are configured (Sensors panel): table + chart
+const gs = d.sensors || {};
+const rows = soil.filter(s => s).map(s => ({name: s.name, value: s.pct, unit: '%', info: s.band_text}));
+Object.keys(gs).forEach(k => rows.push({name: gs[k].name, value: gs[k].value, unit: gs[k].unit, info: k}));
+const allChart = Object.keys(gs).filter(k => gs[k].value != null).map(k =>
+    ({topic: gs[k].name + (gs[k].unit ? ' (' + gs[k].unit + ')' : ''), payload: gs[k].value, timestamp: ts}));
 return [
     sA.pct == null ? null : {payload: sA.pct},
     sB.pct == null ? null : {payload: sB.pct},
@@ -92,7 +102,9 @@ return [
     a.rh_pct == null ? null : {payload: a.rh_pct},
     airChart,
     {payload: pump},
-    {payload: board}
+    {payload: board},
+    rows.length ? {payload: rows} : null,
+    allChart
 ];'''
 add('f_state', 'function', 380, 160, [[o] for o in OUTS], name='split state', func=STATE_JS, outputs=len(OUTS),
     timeout=0, noerr=0, initialize='', finalize='', libs=[])
@@ -129,6 +141,14 @@ gauge('gRH', 'g_air', 2, 'Air humidity', '%', 0, 100,
        {'from': '85', 'color': '#3d7fc4'}], 300)
 chart('chAir', 'g_air', 3, 'Air, 7 days', '°C / %', '', '', ['#e0711f', '#3d7fc4'], 340)
 text('tPump', 'g_pump', 1, 'Pump', 380)
+add('tblAll', 'ui-table', 700, 460, [], group=nid('g_all'), name='All sensors', label='', order=1, width=12, height=4,
+    maxrows=12, passthru=False, autocols=False, showSearch=False, deselect=True, selectionType='none',
+    columns=[{'title': 'Sensor', 'key': 'name', 'keyType': 'key', 'type': 'text', 'width': '', 'align': 'start'},
+             {'title': 'Value', 'key': 'value', 'keyType': 'key', 'type': 'text', 'width': '90', 'align': 'end'},
+             {'title': 'Unit', 'key': 'unit', 'keyType': 'key', 'type': 'text', 'width': '60', 'align': 'start'},
+             {'title': '', 'key': 'info', 'keyType': 'key', 'type': 'text', 'width': '', 'align': 'start'}],
+    mobileBreakpoint='sm', mobileBreakpointType='defaults', action='replace', className='')
+chart('chAll', 'g_all', 2, 'Other sensors, 7 days', '', '', '', ['#2f7d4f', '#3d7fc4', '#e0711f', '#c63c2c', '#d3a21a', '#7a5cc6'], 500)
 text('tBoard', 'g_board', 2, 'Last data', 420)
 
 # ---------------------------------------------------------------- pump log + board status
@@ -162,6 +182,7 @@ const say = t => out.push({payload: t});
 if (msg.topic.endsWith('/state') && typeof msg.payload === 'object') {
     const d = msg.payload;
     (d.soil || []).forEach(s => {
+        if (!s) return;                     // sensor not sent
         const k = 'band_' + s.name;
         if (prev[k] !== undefined && prev[k] !== s.band && ['now', 'dry'].includes(s.band))
             say(`${s.name}: ${s.band_text} (${s.pct}%)`);

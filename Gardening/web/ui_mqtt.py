@@ -17,6 +17,20 @@ def _cfg():
     return c
 
 
+def _fields(c):
+    """'Data to send' checkboxes."""
+    sn = app.sens
+    opts = [('sen_' + c[5], c[4]) for c in sn.ch] + [('sen_' + d.e['id'], d.e['name']) for d in sn.gen] + [
+        ('air', 'Air (temp, RH, pressure)'), ('pump', 'Pump state + events'), ('batt', 'Battery'),
+        ('board', 'Board (WiFi, memory, uptime)')]
+    out = ['<span style="flex-basis:100%;font-size:13px;color:var(--muted)">Data to send:</span>']
+    for k, lbl in opts:
+        out.append('<label class="row" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" '
+                   'name="d_%s" value="1"%s> %s</label>' % (k, ' checked' if not c['fields'] or k in c['fields'] else '',
+                                                           esc(lbl)))
+    return ''.join(out)
+
+
 def frag_mqtt(msg='', ok=False):
     m = app.mqtt
     c = _cfg()
@@ -37,15 +51,15 @@ def frag_mqtt(msg='', ok=False):
                '<label>Topic prefix<input name="base" maxlength="40" value="%s" style="width:9em"></label>'
                '<label>Send every, s<input name="every" type="number" min="10" max="3600" value="%d" style="width:6em"></label>'
                '<label class="row" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="retain" '
-               'value="1"%s> Retain state</label></span><button>Save</button></form>'
+               'value="1"%s> Retain state</label>%s</span><button>Save</button></form>'
                % ('true' if c['on'] else 'false', esc(c['host']), c['port'], esc(c['user']),
                   'saved - leave empty to keep' if c['pw'] else '', esc(c['cid']), esc(c['base']), c['every'],
-                  ' checked' if c['retain'] else ''))
+                  ' checked' if c['retain'] else '', _fields(c)))
     if m and m.connected:
         out.append('<p><button class="small" hx-post="/mqtt/now" hx-target="#mqtt">Send now</button></p>')
     b = esc(c['base'])
-    out.append('<p class="muted">Topics: <code>%s/state</code> (JSON with soil, air, pump, battery, WiFi &ndash; every '
-               'interval and right after pump events), <code>%s/pump/event</code> (pump log lines), <code>%s/status</code> '
+    out.append('<p class="muted">Topics: <code>%s/state</code> (JSON with the ticked items &ndash; every '
+               'interval and right after pump events; an unticked soil sensor is sent as null), <code>%s/pump/event</code> (pump log lines), <code>%s/status</code> '
                '(online / offline, retained). Plain MQTT 3.1.1, no TLS: use it on your own network. Server name or IP; '
                'a name is looked up in the background. Values are averages since the previous send. Not sent in sleep-cycle quick wakes.</p>'
                % (b, b, b))
@@ -78,8 +92,15 @@ def mqtt_post(path, f):
             return frag_mqtt('Client ID: up to 23 letters, digits, dot, dash, underscore.')
         if not (1 <= port <= 65535 and 10 <= every <= 3600):
             return frag_mqtt('Out of range.')
+        sn = app.sens
+        keys = ['sen_' + c[5] for c in sn.ch] + ['sen_' + d.e['id'] for d in sn.gen] + ['air', 'pump', 'batt', 'board']
+        fields = [k for k in keys if f.get('d_' + k) == '1']
+        if len(fields) == len(keys):
+            fields = []                   # everything ticked = send everything, also sensors added later
+        if not fields:
+            return frag_mqtt('Tick at least one item under "Data to send".')
         kw.update(host=host, port=port, user=f.get('user', '').strip()[:32], cid=cid, base=base, every=every,
-                  retain=f.get('retain') == '1')
+                  retain=f.get('retain') == '1', fields=fields)
         pw = f.get('pw', '')[:64]
         if pw or not kw['user']:
             kw['pw'] = pw                 # empty field keeps the saved password (unless no user)

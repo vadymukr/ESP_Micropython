@@ -1,29 +1,97 @@
-# Optional battery / supply voltage monitor (MicroPython). Disabled unless settings.BATT_PIN is set.
+# Battery / supply voltage monitor (MicroPython). Set up from the dashboard Battery panel
+# (DATA_DIR/batt.json); settings.py BATT_* are the template defaults. Not loaded while off.
 #
-# Wiring: battery + -> R1 -> ADC pin -> R2 -> GND   (pin voltage = Vbat * R2 / (R1 + R2))
-#   Use an ADC1 pin (32, 33, 34, 35, 36=VP, 39=VN): ADC2 does not work while WiFi is on.
-#   Keep the pin below ~3.1 V at full charge. Add 100 nF from the pin to GND against noise.
-#   12 V lead-acid / LiFePO4 4S : R1 100k, R2 22k  -> ratio 5.545 (14.4 V -> 2.60 V)
-#   5 V supply / power bank     : R1 10k,  R2 10k  -> ratio 2.0   (5.25 V -> 2.63 V)
-#   1S Li-ion (4.2 V)           : R1 47k,  R2 100k -> ratio 1.47  (4.2 V -> 2.86 V)
-# Large resistors (100k+) keep the divider drain tiny (12 V / 122k = 0.1 mA).
+# Wiring:  V+ ──R1──┬── ADC pin            pin voltage = V * R2 / (R1 + R2)
+#                   ├── R2 ── GND
+#                   ├── 100 nF ── GND     (noise filter, next to the pin)
+#                   └── 3.3 V zener or BAT54S clamp to GND/3V3 (spike protection, optional)
+#   GND of the battery and the ESP32 must be common.
+#   Use a free ADC1 pin: 32, 33, 36 (VP) or 39 (VN). ADC2 pins do not work while WiFi is on;
+#   34/35 are the soil sensors here.
+#   The divider is sized so the pin stays <= ~2.45 V at the highest input voltage: the ESP32 ADC
+#   (11 dB) is accurate only up to ~2.45 V, and the absolute pin limit is 3.3 V. R1 of 100 kOhm also
+#   limits the current into the pin's protection diodes if the input goes far too high.
+#
+#   Preset            max input  R1     R2     ratio  pin at max  drain   alarms (low / critical)
+#   5 V supply/USB    5.5 V      100k   68k    2.47   2.23 V      30 uA   4.6 / 4.4 V
+#   12 V lead-acid    15 V       100k   15k    7.67   1.96 V      0.1 mA  11.8 / 11.4 V
+#   custom            Vmax       100k   largest E12 value with pin <= 2.3 V at Vmax (see suggest())
+#
+# Calibration: measure the real voltage with a multimeter and enter it in the panel; the factor
+# (resistor tolerance, ADC error) is saved as 'cal'.
+import json
+import os
 from machine import ADC, Pin
+import settings as S
+
+CFG = S.DATA_DIR + '/batt.json'
+PINS = (32, 33, 36, 39)                         # ADC1, not used by the soil sensors
+PRESETS = {'5': (5.5, 100, 68, 4.6, 4.4), '12': (15.0, 100, 15, 11.8, 11.4)}   # vmax, R1 k, R2 k, low, crit
+E12 = (10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82, 100)
+PIN_OK_V = 2.45                                 # accurate ADC range (11 dB)
+PIN_MAX_V = 3.1                                 # never above this
+
+
+def defaults():
+    """settings.py template; R1/R2/max input come from the preset (5 V unless BATT_PRESET says otherwise)."""
+    pin = getattr(S, 'BATT_PIN', None)
+    pre = getattr(S, 'BATT_PRESET', '5')
+    vmax, r1, r2, low, crit = PRESETS.get(pre, PRESETS['5'])
+    return {'on': pin is not None, 'pin': pin if pin in PINS else 36, 'preset': pre if pre in PRESETS else 'custom',
+            'vmax': vmax, 'r1': r1, 'r2': r2, 'low': getattr(S, 'BATT_LOW_V', low),
+            'crit': getattr(S, 'BATT_CRIT_V', crit), 'cal': getattr(S, 'BATT_CAL', 1.0)}
+
+
+def load_cfg():
+    c = defaults()
+    try:
+        with open(CFG) as f:
+            d = json.load(f)
+        for k in c:
+            if k in d:
+                c[k] = d[k]
+    except (OSError, ValueError):
+        pass
+    return c
+
+
+def save_cfg(c):
+    tmp = CFG + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(c, f)
+    os.rename(tmp, CFG)
+
+
+def suggest(vmax, r1=100):
+    """Largest E12 R2 (k) with the pin <= 2.3 V at vmax, for R1 = r1 k."""
+    best = None
+    for dec in (1, 10, 100):
+        for e in E12:
+            r2 = e * dec / 10
+            if vmax * r2 / (r1 + r2) <= 2.3 and (best is None or r2 > best):
+                best = r2
+    return best
 
 
 class Battery:
-    def __init__(self, pin, ratio, low_v, crit_v, cal=1.0):
-        self.adc = ADC(Pin(pin))
+    def __init__(self, c):
+        self.cfg = c
+        self.pin = c['pin']
+        self.adc = ADC(Pin(self.pin))
         self.adc.atten(ADC.ATTN_11DB)
-        self.pin, self.ratio, self.low_v, self.crit_v, self.cal = pin, ratio, low_v, crit_v, cal
-        self.v = None
+        self.ratio = (c['r1'] + c['r2']) / c['r2']
+        self.low_v, self.crit_v, self.cal = c['low'], c['crit'], c['cal']
+        self.v = None                  # calibrated, smoothed input voltage
+        self.pin_v = None              # voltage at the pin (smoothed)
         self.state = 'ok'
 
     def read(self):
         s = 0
         for _ in range(16):
             s += self.adc.read_uv()          # factory-calibrated microvolts
-        v = s / 16 / 1e6 * self.ratio * self.cal
-        self.v = v if self.v is None else self.v * 0.7 + v * 0.3     # smooth load dips
+        pv = s / 16 / 1e6
+        self.pin_v = pv if self.pin_v is None else self.pin_v * 0.7 + pv * 0.3   # smooth load dips
+        self.v = self.pin_v * self.ratio * self.cal
         # hysteresis of 0.1 V so the state does not flicker at the threshold
         if self.v <= self.crit_v or (self.state == 'crit' and self.v < self.crit_v + 0.1):
             self.state = 'crit'

@@ -144,7 +144,9 @@ rm -rf "$BUILD"; mkdir -p "$BUILD/www"
 "$MPYCROSS" -O1 -o "$BUILD/mqtt.mpy" ../mqtt.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_pump.mpy" ui_pump.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_mqtt.mpy" ui_mqtt.py
-for m in ui_wifi ui_files captive; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
+for m in ui_wifi ui_files captive ui_batt ui_sensors; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
+"$MPYCROSS" -O1 -o "$BUILD/sensors.mpy" ../sensors.py           # sensor registry + one file per driver type
+for f in ../drv_*.py; do "$MPYCROSS" -O1 -o "$BUILD/$(basename "${f%.py}").mpy" "$f"; done
 cp main.py settings.py "$BUILD/"
 # Static files gzipped (served as-is with Content-Encoding: gzip, streamed in 512 B chunks)
 for f in www/*; do gzip -9 -n -c "$f" > "$BUILD/$f.gz"; done
@@ -156,7 +158,7 @@ $MP exec "import os
 for d in ('www','data'):
     try: os.mkdir(d)
     except OSError: pass
-for f in ('aht10.py','app.py','climate.py','bands.py','leds.py','battery.py','power.py','ui_cfg.py','cycle.py','pump.py','mqtt.py','ui_pump.py','ui_mqtt.py','ui_wifi.py','ui_files.py','captive.py'):
+for f in ('aht10.py','app.py','climate.py','bands.py','leds.py','battery.py','power.py','ui_cfg.py','cycle.py','pump.py','mqtt.py','ui_pump.py','ui_mqtt.py','ui_wifi.py','ui_files.py','captive.py','ui_batt.py','ui_sensors.py','sensors.py'):
     try: os.remove(f)
     except OSError: pass" >/dev/null
 MODS="app aht10 climate bands leds battery power ui_cfg cycle"
@@ -171,9 +173,9 @@ if [[ -n "$FROZEN" ]]; then
 for m in '$MODS'.split():
     try: os.remove(m + '.mpy')
     except OSError: pass" >/dev/null
-  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
 else
-  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
 fi
 $MP cp "$BUILD"/www/*.gz :www/ >/dev/null
 if [[ -f wifi.json ]]; then $MP cp wifi.json :wifi.json >/dev/null; echo "   uploaded wifi.json"; fi

@@ -146,6 +146,19 @@
  },
  {
   "id": "6a7264656e00000b",
+  "type": "ui-group",
+  "name": "All sensors",
+  "page": "6a7264656e000005",
+  "width": "12",
+  "height": "1",
+  "order": 6,
+  "showTitle": true,
+  "className": "",
+  "visible": "true",
+  "disabled": "false"
+ },
+ {
+  "id": "6a7264656e00000c",
   "type": "ui-notification",
   "z": "6a7264656e000001",
   "x": 1110,
@@ -165,7 +178,7 @@
   "name": "Alerts"
  },
  {
-  "id": "6a7264656e00000c",
+  "id": "6a7264656e00000d",
   "type": "comment",
   "z": "6a7264656e000001",
   "x": 40,
@@ -174,15 +187,15 @@
   "info": "1. Palette: install @flowfuse/node-red-dashboard (Dashboard 2.0).\n2. Edit the \"Mosquitto\" broker node (host/port/user) - default localhost:1883.\n3. On the garden board: MQTT panel -> server = this Mosquitto, topic prefix \"garden\".\n   If you change the prefix, change the 3 MQTT-in topics here too.\n4. Dashboard: http://<node-red>:1880/dashboard/garden\nMosquitto 2.x needs \"listener 1883\" + \"allow_anonymous true\" (or a password file) to accept the board."
  },
  {
-  "id": "6a7264656e00000d",
+  "id": "6a7264656e00000e",
   "type": "mqtt in",
   "z": "6a7264656e000001",
   "x": 140,
   "y": 160,
   "wires": [
    [
-    "6a7264656e00000e",
-    "6a7264656e00000f"
+    "6a7264656e00000f",
+    "6a7264656e000010"
    ]
   ],
   "name": "garden/state",
@@ -196,15 +209,15 @@
   "inputs": 0
  },
  {
-  "id": "6a7264656e000010",
+  "id": "6a7264656e000011",
   "type": "mqtt in",
   "z": "6a7264656e000001",
   "x": 140,
   "y": 560,
   "wires": [
    [
-    "6a7264656e000011",
-    "6a7264656e00000f"
+    "6a7264656e000012",
+    "6a7264656e000010"
    ]
   ],
   "name": "garden/pump/event",
@@ -218,15 +231,15 @@
   "inputs": 0
  },
  {
-  "id": "6a7264656e000012",
+  "id": "6a7264656e000013",
   "type": "mqtt in",
   "z": "6a7264656e000001",
   "x": 140,
   "y": 640,
   "wires": [
    [
-    "6a7264656e000013",
-    "6a7264656e00000f"
+    "6a7264656e000014",
+    "6a7264656e000010"
    ]
   ],
   "name": "garden/status",
@@ -240,15 +253,12 @@
   "inputs": 0
  },
  {
-  "id": "6a7264656e00000e",
+  "id": "6a7264656e00000f",
   "type": "function",
   "z": "6a7264656e000001",
   "x": 380,
   "y": 160,
   "wires": [
-   [
-    "6a7264656e000014"
-   ],
    [
     "6a7264656e000015"
    ],
@@ -275,11 +285,20 @@
    ],
    [
     "6a7264656e00001d"
+   ],
+   [
+    "6a7264656e00001e"
+   ],
+   [
+    "6a7264656e00001f"
+   ],
+   [
+    "6a7264656e000020"
    ]
   ],
   "name": "split state",
-  "func": "// garden/state -> one message per widget\nconst d = msg.payload;\nif (typeof d !== 'object' || !d.soil) return null;\nconst ts = Date.now();\nconst sA = d.soil[0] || {}, sB = d.soil[1] || {};\nconst txt = s => s.name === undefined ? '-' :\n    `${s.band_text} · F ${s.full_F}% · water at ${s.water_at}% · ` +\n    `−${s.dry_rate_pts_day} pts/day${s.rate_measured ? '' : ' (est.)'} · raw ${s.raw}`;\nconst soilChart = d.soil.map(s => ({topic: s.name, payload: s.pct, timestamp: ts}));\nconst a = d.air || {};\nconst airChart = [];\nif (a.temp_c != null) airChart.push({topic: 'Air °C', payload: a.temp_c, timestamp: ts});\nif (a.rh_pct != null) airChart.push({topic: 'Air RH %', payload: a.rh_pct, timestamp: ts});\nconst p = d.pump;\nconst pump = !p ? 'no pump configured' :\n    (p.fault ? '⚠ LOCKED: ' + p.fault :\n     (p.on ? 'RUNNING' : (p.busy ? 'watching moisture' : 'ready')) +\n     ` · mode ${p.mode} · today ${p.today_s} / ${p.day_max_s} s` + (p.tank_empty ? ' · TANK EMPTY' : ''));\nconst board = `${d.time || 'clock not set'} · ${d.samples} samples averaged · ` +\n    `WiFi ${d.wifi_rssi == null ? '-' : d.wifi_rssi + ' dBm'} · heap ${Math.round(d.heap_free / 1024)} KB` +\n    (d.battery ? ` · battery ${d.battery.v} V (${d.battery.state})` : '') +\n    (d.recording ? ` · recording ${d.recording}` : '');\nreturn [\n    sA.pct == null ? null : {payload: sA.pct},\n    sB.pct == null ? null : {payload: sB.pct},\n    {payload: txt(sA)},\n    {payload: txt(sB)},\n    soilChart,          // array = one message per sensor on this output\n    a.temp_c == null ? null : {payload: a.temp_c},\n    a.rh_pct == null ? null : {payload: a.rh_pct},\n    airChart,\n    {payload: pump},\n    {payload: board}\n];",
-  "outputs": 10,
+  "func": "// garden/state -> one message per widget\n// Items can be switched off on the board (MQTT panel \"Data to send\"): an unticked soil sensor is\n// null in its slot, other groups (air, pump, battery, board info) are simply missing.\nconst d = msg.payload;\nif (typeof d !== 'object' || d === null) return null;\nconst ts = Date.now();\nconst soil = d.soil || [];\nconst sA = soil[0] || {}, sB = soil[1] || {};\nconst txt = s => s.name === undefined ? '-' :\n    `${s.band_text} · F ${s.full_F}% · water at ${s.water_at}% · ` +\n    `−${s.dry_rate_pts_day} pts/day${s.rate_measured ? '' : ' (est.)'} · raw ${s.raw}`;\nconst soilChart = soil.filter(s => s).map(s => ({topic: s.name, payload: s.pct, timestamp: ts}));\nconst a = d.air || {};\nconst airChart = [];\nif (a.temp_c != null) airChart.push({topic: 'Air °C', payload: a.temp_c, timestamp: ts});\nif (a.rh_pct != null) airChart.push({topic: 'Air RH %', payload: a.rh_pct, timestamp: ts});\nconst p = d.pump;\nconst pump = !p ? 'not sent' :\n    (p.fault ? '⚠ LOCKED: ' + p.fault :\n     (p.on ? 'RUNNING' : (p.busy ? 'watching moisture' : 'ready')) +\n     ` · mode ${p.mode} · today ${p.today_s} / ${p.day_max_s} s` + (p.tank_empty ? ' · TANK EMPTY' : ''));\nconst board = `${d.time || 'clock not set'} · ${d.samples} samples averaged` +\n    (d.wifi_rssi != null ? ` · WiFi ${d.wifi_rssi} dBm` : '') +\n    (d.heap_free != null ? ` · heap ${Math.round(d.heap_free / 1024)} KB` : '') +\n    (d.battery ? ` · battery ${d.battery.v} V (${d.battery.state})` : '') +\n    (d.recording ? ` · recording ${d.recording}` : '');\n// every sensor on the board, however many are configured (Sensors panel): table + chart\nconst gs = d.sensors || {};\nconst rows = soil.filter(s => s).map(s => ({name: s.name, value: s.pct, unit: '%', info: s.band_text}));\nObject.keys(gs).forEach(k => rows.push({name: gs[k].name, value: gs[k].value, unit: gs[k].unit, info: k}));\nconst allChart = Object.keys(gs).filter(k => gs[k].value != null).map(k =>\n    ({topic: gs[k].name + (gs[k].unit ? ' (' + gs[k].unit + ')' : ''), payload: gs[k].value, timestamp: ts}));\nreturn [\n    sA.pct == null ? null : {payload: sA.pct},\n    sB.pct == null ? null : {payload: sB.pct},\n    {payload: txt(sA)},\n    {payload: txt(sB)},\n    soilChart,          // array = one message per sensor on this output\n    a.temp_c == null ? null : {payload: a.temp_c},\n    a.rh_pct == null ? null : {payload: a.rh_pct},\n    airChart,\n    {payload: pump},\n    {payload: board},\n    rows.length ? {payload: rows} : null,\n    allChart\n];",
+  "outputs": 12,
   "timeout": 0,
   "noerr": 0,
   "initialize": "",
@@ -287,7 +306,7 @@
   "libs": []
  },
  {
-  "id": "6a7264656e000014",
+  "id": "6a7264656e000015",
   "type": "ui-gauge",
   "z": "6a7264656e000001",
   "x": 700,
@@ -336,7 +355,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000015",
+  "id": "6a7264656e000016",
   "type": "ui-gauge",
   "z": "6a7264656e000001",
   "x": 700,
@@ -385,7 +404,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000016",
+  "id": "6a7264656e000017",
   "type": "ui-text",
   "z": "6a7264656e000001",
   "x": 700,
@@ -407,7 +426,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000017",
+  "id": "6a7264656e000018",
   "type": "ui-text",
   "z": "6a7264656e000001",
   "x": 700,
@@ -429,7 +448,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000018",
+  "id": "6a7264656e000019",
   "type": "ui-chart",
   "z": "6a7264656e000001",
   "x": 700,
@@ -479,7 +498,7 @@
   "interpolation": "linear"
  },
  {
-  "id": "6a7264656e000019",
+  "id": "6a7264656e00001a",
   "type": "ui-gauge",
   "z": "6a7264656e000001",
   "x": 700,
@@ -524,7 +543,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e00001a",
+  "id": "6a7264656e00001b",
   "type": "ui-gauge",
   "z": "6a7264656e000001",
   "x": 700,
@@ -569,7 +588,7 @@
   "className": ""
  },
  {
-  "id": "6a7264656e00001b",
+  "id": "6a7264656e00001c",
   "type": "ui-chart",
   "z": "6a7264656e000001",
   "x": 700,
@@ -619,7 +638,7 @@
   "interpolation": "linear"
  },
  {
-  "id": "6a7264656e00001c",
+  "id": "6a7264656e00001d",
   "type": "ui-text",
   "z": "6a7264656e000001",
   "x": 700,
@@ -641,7 +660,119 @@
   "className": ""
  },
  {
-  "id": "6a7264656e00001d",
+  "id": "6a7264656e00001f",
+  "type": "ui-table",
+  "z": "6a7264656e000001",
+  "x": 700,
+  "y": 460,
+  "wires": [],
+  "group": "6a7264656e00000b",
+  "name": "All sensors",
+  "label": "",
+  "order": 1,
+  "width": 12,
+  "height": 4,
+  "maxrows": 12,
+  "passthru": false,
+  "autocols": false,
+  "showSearch": false,
+  "deselect": true,
+  "selectionType": "none",
+  "columns": [
+   {
+    "title": "Sensor",
+    "key": "name",
+    "keyType": "key",
+    "type": "text",
+    "width": "",
+    "align": "start"
+   },
+   {
+    "title": "Value",
+    "key": "value",
+    "keyType": "key",
+    "type": "text",
+    "width": "90",
+    "align": "end"
+   },
+   {
+    "title": "Unit",
+    "key": "unit",
+    "keyType": "key",
+    "type": "text",
+    "width": "60",
+    "align": "start"
+   },
+   {
+    "title": "",
+    "key": "info",
+    "keyType": "key",
+    "type": "text",
+    "width": "",
+    "align": "start"
+   }
+  ],
+  "mobileBreakpoint": "sm",
+  "mobileBreakpointType": "defaults",
+  "action": "replace",
+  "className": ""
+ },
+ {
+  "id": "6a7264656e000020",
+  "type": "ui-chart",
+  "z": "6a7264656e000001",
+  "x": 700,
+  "y": 500,
+  "wires": [],
+  "group": "6a7264656e00000b",
+  "name": "Other sensors, 7 days",
+  "label": "Other sensors, 7 days",
+  "order": 2,
+  "chartType": "line",
+  "category": "topic",
+  "categoryType": "msg",
+  "xAxisLabel": "",
+  "xAxisProperty": "",
+  "xAxisPropertyType": "timestamp",
+  "xAxisType": "time",
+  "xAxisFormat": "",
+  "xAxisFormatType": "auto",
+  "yAxisLabel": "",
+  "yAxisProperty": "payload",
+  "yAxisPropertyType": "msg",
+  "ymin": "",
+  "ymax": "",
+  "action": "append",
+  "stackSeries": false,
+  "pointShape": "false",
+  "pointRadius": 2,
+  "showLegend": true,
+  "removeOlder": "7",
+  "removeOlderUnit": "86400",
+  "removeOlderPoints": "",
+  "colors": [
+   "#2f7d4f",
+   "#3d7fc4",
+   "#e0711f",
+   "#c63c2c",
+   "#d3a21a",
+   "#7a5cc6"
+  ],
+  "textColor": [
+   "#666666"
+  ],
+  "textColorDefault": true,
+  "gridColor": [
+   "#e5e5e5"
+  ],
+  "gridColorDefault": true,
+  "width": 12,
+  "height": 5,
+  "className": "",
+  "interpolation": "linear"
+ },
+ {
+  "id": "6a7264656e00001e",
   "type": "ui-text",
   "z": "6a7264656e000001",
   "x": 700,
@@ -663,14 +794,14 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000011",
+  "id": "6a7264656e000012",
   "type": "function",
   "z": "6a7264656e000001",
   "x": 380,
   "y": 560,
   "wires": [
    [
-    "6a7264656e00001e"
+    "6a7264656e000021"
    ]
   ],
   "name": "pump log",
@@ -683,7 +814,7 @@
   "libs": []
  },
  {
-  "id": "6a7264656e00001e",
+  "id": "6a7264656e000021",
   "type": "ui-table",
   "z": "6a7264656e000001",
   "x": 700,
@@ -725,14 +856,14 @@
   "className": ""
  },
  {
-  "id": "6a7264656e000013",
+  "id": "6a7264656e000014",
   "type": "function",
   "z": "6a7264656e000001",
   "x": 380,
   "y": 640,
   "wires": [
    [
-    "6a7264656e00001f"
+    "6a7264656e000022"
    ]
   ],
   "name": "board status",
@@ -745,7 +876,7 @@
   "libs": []
  },
  {
-  "id": "6a7264656e00001f",
+  "id": "6a7264656e000022",
   "type": "ui-text",
   "z": "6a7264656e000001",
   "x": 700,
@@ -767,18 +898,18 @@
   "className": ""
  },
  {
-  "id": "6a7264656e00000f",
+  "id": "6a7264656e000010",
   "type": "function",
   "z": "6a7264656e000001",
   "x": 860,
   "y": 640,
   "wires": [
    [
-    "6a7264656e00000b"
+    "6a7264656e00000c"
    ]
   ],
   "name": "alerts on change",
-  "func": "// Pop-up alerts, sent once when a state changes (not on every message).\nconst prev = context.get('prev') || {};\nconst out = [];\nconst say = t => out.push({payload: t});\nif (msg.topic.endsWith('/state') && typeof msg.payload === 'object') {\n    const d = msg.payload;\n    (d.soil || []).forEach(s => {\n        const k = 'band_' + s.name;\n        if (prev[k] !== undefined && prev[k] !== s.band && ['now', 'dry'].includes(s.band))\n            say(`${s.name}: ${s.band_text} (${s.pct}%)`);\n        prev[k] = s.band;\n    });\n    const f = d.pump && d.pump.fault;\n    if (f && f !== prev.fault) say('Pump locked: ' + f);\n    prev.fault = f || null;\n    const t = d.air && d.air.temp_c;\n    const hot = t != null && t > 32;\n    if (hot && !prev.hot) say(`Hot: ${t} °C - above 32 °C cucumbers drop flowers`);\n    prev.hot = hot;\n} else if (msg.topic.endsWith('/status')) {\n    const s = String(msg.payload);\n    if (s === 'offline' && prev.status === 'online') say('Garden board went offline');\n    prev.status = s;\n} else if (msg.topic.endsWith('/pump/event') && /DRY RUN/.test(String(msg.payload))) {\n    say(String(msg.payload));\n}\ncontext.set('prev', prev);\nreturn [out];",
+  "func": "// Pop-up alerts, sent once when a state changes (not on every message).\nconst prev = context.get('prev') || {};\nconst out = [];\nconst say = t => out.push({payload: t});\nif (msg.topic.endsWith('/state') && typeof msg.payload === 'object') {\n    const d = msg.payload;\n    (d.soil || []).forEach(s => {\n        if (!s) return;                     // sensor not sent\n        const k = 'band_' + s.name;\n        if (prev[k] !== undefined && prev[k] !== s.band && ['now', 'dry'].includes(s.band))\n            say(`${s.name}: ${s.band_text} (${s.pct}%)`);\n        prev[k] = s.band;\n    });\n    const f = d.pump && d.pump.fault;\n    if (f && f !== prev.fault) say('Pump locked: ' + f);\n    prev.fault = f || null;\n    const t = d.air && d.air.temp_c;\n    const hot = t != null && t > 32;\n    if (hot && !prev.hot) say(`Hot: ${t} °C - above 32 °C cucumbers drop flowers`);\n    prev.hot = hot;\n} else if (msg.topic.endsWith('/status')) {\n    const s = String(msg.payload);\n    if (s === 'offline' && prev.status === 'online') say('Garden board went offline');\n    prev.status = s;\n} else if (msg.topic.endsWith('/pump/event') && /DRY RUN/.test(String(msg.payload))) {\n    say(String(msg.payload));\n}\ncontext.set('prev', prev);\nreturn [out];",
   "outputs": 1,
   "timeout": 0,
   "noerr": 0,

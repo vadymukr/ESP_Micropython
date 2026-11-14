@@ -44,7 +44,7 @@ class Bands:
     def __init__(self, n, uptime, time_ok):
         self.n, self.up, self.time_ok = n, uptime, time_ok
         self.stage = S.BANDS_STAGE
-        self.full = list(S.BANDS_FULL[:n])     # F per sensor: each sensor is judged against its own F
+        self.full = list(S.BANDS_FULL[:n]) + [70] * max(0, n - len(S.BANDS_FULL))   # F per sensor
         self.link = False                      # optional: F[i] = F[0] + off[i] (edit one number)
         self.off = [x - self.full[0] for x in self.full]
         c = _load(CFG)

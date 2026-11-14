@@ -12,6 +12,7 @@
 #                      soil and air are the AVERAGE of all 2-s samples since the previous publish
 #                      (same method as the CSV recorder), 'samples' = how many
 #   <base>/pump/event  pump log lines (ON / OFF / check OK / DRY RUN ...) as they happen
+# What goes into <base>/state is chosen with checkboxes on the page ('fields').
 try:
     import asyncio
 except ImportError:
@@ -27,7 +28,8 @@ DEFAULTS = {'on': getattr(S, 'MQTT_ENABLED', False), 'host': getattr(S, 'MQTT_HO
             'port': getattr(S, 'MQTT_PORT', 1883), 'user': getattr(S, 'MQTT_USER', ''),
             'pw': getattr(S, 'MQTT_PASSWORD', ''), 'cid': getattr(S, 'MQTT_CLIENT_ID', ''),
             'base': getattr(S, 'MQTT_TOPIC', 'garden'), 'every': getattr(S, 'MQTT_EVERY_S', 60),
-            'retain': getattr(S, 'MQTT_RETAIN', True)}
+            'retain': getattr(S, 'MQTT_RETAIN', True), 'fields': list(getattr(S, 'MQTT_FIELDS', ()))}
+FIELDS = ('air', 'pump', 'batt', 'board')       # plus 'sen_<id>' per registry sensor; [] = everything
 
 
 def load_cfg():
@@ -93,23 +95,29 @@ class Mqtt:
         self.kick = False              # reconnect with new settings
         self.ip = None                 # cached (host name, 'ip') of the broker
         self.dns = None                # box of a lookup thread still running
-        self._acc_reset(0)
+        self._acc_reset(0, 0)
 
     # ---------------------------------------------------------------- averaging since the last publish
-    def _acc_reset(self, n):
+    def _acc_reset(self, n, m):
         self.acc_raw = [0] * n
+        self.acc_g = [0.0] * m               # registry sensor channels (sum, count)
+        self.acc_gn = [0] * m
         self.acc_n = 0
         self.acc_t = self.acc_h = self.acc_p = 0.0
         self.acc_tn = self.acc_hn = self.acc_pn = 0
 
-    def feed(self, raw, t, rh, p):
+    def feed(self, raw, t, rh, p, g=()):
         """Called by the sampler after every reading (~2 s)."""
         if not self.cfg['on']:
             return
-        if len(self.acc_raw) != len(raw):
-            self._acc_reset(len(raw))
+        if len(self.acc_raw) != len(raw) or len(self.acc_g) != len(g):
+            self._acc_reset(len(raw), len(g))
         for i, r in enumerate(raw):
             self.acc_raw[i] += r
+        for j, v in enumerate(g):
+            if v is not None:
+                self.acc_g[j] += v
+                self.acc_gn[j] += 1
         self.acc_n += 1
         if t is not None:
             self.acc_t += t
@@ -122,12 +130,13 @@ class Mqtt:
             self.acc_pn += 1
 
     def avg(self):
-        """(raw averages, temp, rh, hpa, samples) since the last publish; None parts = no data."""
+        """(raw averages, temp, rh, hpa, samples, channel averages) since the last publish."""
         n = self.acc_n
         return ([r / n for r in self.acc_raw] if n else None,
                 self.acc_t / self.acc_tn if self.acc_tn else None,
                 self.acc_h / self.acc_hn if self.acc_hn else None,
-                self.acc_p / self.acc_pn if self.acc_pn else None, n)
+                self.acc_p / self.acc_pn if self.acc_pn else None, n,
+                [a / c if c else None for a, c in zip(self.acc_g, self.acc_gn)])
 
     def save(self, **kw):
         self.cfg.update(kw)
@@ -138,7 +147,8 @@ class Mqtt:
 
     def event(self, text):
         """Hook for pump.log(): queue the line and publish the state right after it."""
-        if self.cfg['on']:
+        f = self.cfg['fields']
+        if self.cfg['on'] and (not f or 'pump' in f):
             if len(self.events) >= 10:
                 self.events.pop(0)
             self.events.append(text)
@@ -250,8 +260,8 @@ class Mqtt:
                     self.events.pop(0)
                 if now >= self.next:
                     self.next = now + c['every']
-                    await self._publish(self.topic('state'), json.dumps(snapshot(self.avg())), c['retain'])
-                    self._acc_reset(len(self.acc_raw))
+                    await self._publish(self.topic('state'), json.dumps(snapshot(self.avg(), c['fields'])), c['retain'])
+                    self._acc_reset(len(self.acc_raw), len(self.acc_g))
                     self.sent += 1
                     self.last = now
                     await self._send(b'\xc0\x00')             # PINGREQ: is the broker really there?
