@@ -1,0 +1,5 @@
+Gardening/web/wifi.json
+Gardening/web/build/
+Gardening/firmware/micropython/
+__pycache__/
+*.pyc

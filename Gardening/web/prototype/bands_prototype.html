@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garden Logger - watering bands prototype</title>
+<!-- PROTOTYPE ONLY (not deployed: deploy.sh only gzips www/*).
+     Same CSS tokens as www/index.html; the "Demo controls" box simulates readings. -->
+<style>
+:root{--bg:#f4f6f3;--card:#fff;--fg:#1d2420;--muted:#66706a;--line:#dde3de;--acc:#2f7d4f;--warn:#b5491f;--bar:#e3ebe5;
+  --b-wet:#3d7fc4;--b-good:#2f9a58;--b-soon:#d3a21a;--b-now:#e0711f;--b-dry:#c63c2c}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d231f;--fg:#e6ece7;--muted:#97a29b;--line:#2d3530;--acc:#5bbf82;--warn:#f08a5d;--bar:#2a332d;
+  --b-wet:#5c9ddf;--b-good:#4cbb76;--b-soon:#e2b53a;--b-now:#ef8a3e;--b-dry:#e2604f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+h1{font-size:20px;margin:4px 0}
+h2{font-size:16px;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+h3{font-size:14px;margin:0;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:6px}
+small{color:var(--muted);font-weight:400}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px;border-left-width:4px}
+.big{font-size:34px;font-weight:600;font-variant-numeric:tabular-nums}
+.big small{font-size:16px}
+.muted{color:var(--muted);font-size:13px;margin:6px 0 0}
+.pill{font-size:13px;padding:2px 10px;border-radius:99px;border:1px solid var(--line)}
+.pill.ok{color:var(--acc)}
+/* band badge */
+.badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;color:#fff;white-space:nowrap}
+.wet{--c:var(--b-wet)}.good{--c:var(--b-good)}.soon{--c:var(--b-soon)}.now{--c:var(--b-now)}.dry{--c:var(--b-dry)}
+.badge{background:var(--c)} .card.band{border-left-color:var(--c)}
+/* band scale: 0..100 % with coloured zones, F tick and current marker */
+.scale{position:relative;height:12px;border-radius:6px;overflow:visible;margin:12px 0 18px;display:flex}
+.scale i{display:block;height:100%}
+.scale i:first-child{border-radius:6px 0 0 6px}.scale i:last-child{border-radius:0 6px 6px 0}
+.scale .mark{position:absolute;top:-5px;width:4px;height:22px;margin-left:-2px;border-radius:2px;background:var(--fg);box-shadow:0 0 0 2px var(--card)}
+.scale .f{position:absolute;top:14px;font-size:11px;color:var(--muted);transform:translateX(-50%)}
+.scale .f::before{content:'';position:absolute;left:50%;top:-16px;height:14px;border-left:1px dashed var(--muted)}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:1px 10px;font-size:13px;margin:4px 0 0}
+.facts dt{color:var(--muted)}.facts dd{margin:0;font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:10px}
+.legend span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:-1px}
+.alert{border-radius:8px;padding:8px 10px;margin:0 0 10px;font-size:14px;background:color-mix(in srgb,var(--c) 14%,transparent);border:1px solid color-mix(in srgb,var(--c) 45%,transparent)}
+/* settings */
+details summary{cursor:pointer;font-weight:600;font-size:15px}
+form.set{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-top:10px}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:3px}
+input,select,button{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+button{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc)}
+button.small{padding:3px 9px;font-size:13px;background:var(--card);color:var(--fg);border-color:var(--line)}
+.demo{border-style:dashed}
+.demo .row{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+.demo input[type=range]{width:180px;padding:0}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Garden moisture logger</h1>
+  <span class="pill ok">live</span>
+</header>
+
+<section class="demo">
+  <h2>Demo controls <small>prototype only &ndash; simulates readings</small></h2>
+  <div class="row">
+    <label>Sensor A reading <input type="range" min="20" max="85" value="64" id="dA"></label>
+    <label>Sensor B reading <input type="range" min="15" max="75" value="53" id="dB"></label>
+    <label>Air temperature <input type="range" min="15" max="42" value="31" id="dT"></label>
+    <button class="small" type="button" onclick="preset(71,60,26)">After watering</button>
+    <button class="small" type="button" onclick="preset(64,53,31)">Now (from your log)</button>
+    <button class="small" type="button" onclick="preset(55,44,37)">2 days later</button>
+    <button class="small" type="button" onclick="preset(42,30,38)">Forgotten</button>
+  </div>
+</section>
+
+<section>
+  <h2>Current values <small id="stageLbl"></small></h2>
+  <div id="alert"></div>
+  <div class="grid" id="cards"></div>
+  <div class="legend">
+    <span class="wet">Too wet (&gt; F+5)</span><span class="good">Good</span><span class="soon">Water soon</span>
+    <span class="now">Water now</span><span class="dry">Drought</span><span style="--c:transparent">F = soil &ldquo;full&rdquo; reading</span>
+  </div>
+  <p class="muted">Sampled 2026-11-05 17:26:22 &middot; 1 s ago</p>
+</section>
+
+<section>
+  <details open>
+    <summary>Watering bands &ndash; settings</summary>
+    <form class="set" onsubmit="return false">
+      <label>Growth stage
+        <select id="stage">
+          <option value="5">Germination (0&ndash;10 days)</option>
+          <option value="10">Seedling / transplant</option>
+          <option value="15">Vine growth</option>
+          <option value="10" selected>Flowering &amp; fruiting</option>
+          <option value="10">Late harvest</option>
+        </select></label>
+      <label>Sensor A full (F), %
+        <input id="fA" type="number" min="20" max="100" value="70" style="width:6em"></label>
+      <button class="small" type="button" onclick="useNow('A')">Use current A</button>
+      <label>Sensor B full (F), %
+        <input id="fB" type="number" min="20" max="100" value="59" style="width:6em"></label>
+      <button class="small" type="button" onclick="useNow('B')">Use current B</button>
+      <button type="button">Save</button>
+    </form>
+    <p class="muted">Set F from the reading that settles a few hours after a deep watering (pots) or about a day after (garden beds).
+      Defaults from your 4&ndash;5 Nov recording: A 70%, B 59%. Saved on the board in <code>bands.json</code>.</p>
+  </details>
+</section>
+</main>
+
+<script>
+// ---- band logic (the board would compute this in Python inside /live) ----
+const $ = id => document.getElementById(id);
+const BANDS = [ // [class, label] from wettest to driest
+  ['wet','Too wet'], ['good','Good'], ['soon','Water soon'], ['now','Water now'], ['dry','Drought']];
+// thresholds relative to F; w = stage "water at" offset (points below F)
+function edges(F, w){ return [F+5, F-w, F-w-10, F-w-20]; }   // wet | good | soon | now | dry
+function band(v, F, w){ const e = edges(F, w); let i = 0; while (i < 4 && v < e[i]) i++; return BANDS[i]; }
+const RATE = 6 / 24;   // points per hour, from the recording (about 6 points per day)
+
+function scaleHTML(v, F, w){
+  const e = edges(F, w), cuts = [100, ...e.map(x => Math.max(0, Math.min(100, x))), 0];
+  let zones = '';
+  for (let i = 0; i < 5; i++) zones += `<i class="${BANDS[i][0]}" style="background:var(--c);width:${cuts[i]-cuts[i+1]}%"></i>`;
+  // flex is left->right = 0..100, so render reversed (dry on the left)
+  zones = zones.split('</i>').filter(Boolean).reverse().join('</i>') + '</i>';
+  return `<div class="scale">${zones}<b class="mark" style="left:${v}%"></b><span class="f" style="left:${F}%">F ${F}</span></div>`;
+}
+
+function sensorCard(name, gpio, v, F, w, raw, cal){
+  const [cls, label] = band(v, F, w), at = F - w;
+  const hrs = v > at ? Math.round((v - at) / RATE) : 0;
+  const when = cls === 'wet' ? 'let it drain, check drainage'
+             : cls === 'soon' ? '<b>today</b>, early morning'
+             : cls === 'now' || cls === 'dry' ? '<b>water now</b>, deeply'
+             : hrs < 36 ? `in about <b>${hrs} h</b>` : `in about <b>${Math.round(hrs/24)} days</b>`;
+  return `<div class="card band ${cls}">
+    <h3><span>${name} <small>GPIO${gpio}</small></span><span class="badge">${label}</span></h3>
+    <div class="big">${v}<small>%</small></div>
+    ${scaleHTML(v, F, w)}
+    <dl class="facts"><dt>Full (F)</dt><dd>${F}% &middot; water at ${at}%</dd>
+      <dt>Next watering</dt><dd>${when}</dd><dt>Trend 24 h</dt><dd>&minus;6 pts/day</dd></dl>
+    <p class="muted">raw ${raw} &middot; dry ${cal[0]} &middot; wet ${cal[1]}</p></div>`;
+}
+
+function airCard(t){
+  const hot = t > 32, warm = t > 28, cold = t < 15;
+  const cls = hot ? 'now' : (warm || cold) ? 'soon' : 'good';
+  const label = hot ? 'Too hot' : warm ? 'Warm' : cold ? 'Too cold' : 'Good';
+  return `<div class="card band ${cls}">
+    <h3><span>Air <small>Si7020 + BMP280</small></span><span class="badge">${label}</span></h3>
+    <div class="big">${t.toFixed(1)}<small>&deg;C</small></div>
+    <p class="muted">62% RH &middot; 1013.8 hPa</p>
+    <dl class="facts"><dt>Cucumbers</dt><dd>22&ndash;28 &deg;C day &middot; 60&ndash;80% RH</dd></dl></div>`;
+}
+
+function render(){
+  const a = +$('dA').value, b = +$('dB').value, t = +$('dT').value;
+  const w = +$('stage').value, fA = +$('fA').value, fB = +$('fB').value;
+  $('stageLbl').textContent = 'stage: ' + $('stage').selectedOptions[0].text;
+  $('cards').innerHTML = sensorCard('Sensor A', 34, a, fA, w, Math.round(3390 - a * 17.21), [3390, 1669])
+                       + sensorCard('Sensor B', 35, b, fB, w, Math.round(3443 - b * 18.10), [3443, 1633]) + airCard(t);
+  // one summary line for the most urgent condition
+  const order = ['dry','now','wet','soon'], found = [[band(a,fA,w)[0],'A'],[band(b,fB,w)[0],'B']];
+  let msg = '';
+  for (const c of order) { const s = found.filter(x => x[0] === c).map(x => x[1]);
+    if (s.length) { msg = {dry:'Drought stress on sensor ', now:'Water now: sensor ', wet:'Too wet: sensor ', soon:'Water soon: sensor '}[c]
+      + s.join(' and ') + (t > 32 ? ' &middot; and it is hot (' + t + ' &deg;C), water early morning' : '');
+      msg = `<div class="alert ${c}" style="--c:var(--b-${c})">${msg}</div>`; break; } }
+  if (!msg && t > 32) msg = `<div class="alert now" style="--c:var(--b-now)">Hot: ${t} &deg;C &ndash; above 32 &deg;C cucumbers drop flowers. Shade 08:00&ndash;12:00.</div>`;
+  $('alert').innerHTML = msg;
+}
+function preset(a, b, t){ $('dA').value = a; $('dB').value = b; $('dT').value = t; render(); }
+function useNow(s){ $('f' + s).value = $('d' + s).value; render(); }
+['dA','dB','dT','stage','fA','fB'].forEach(id => $(id).addEventListener('input', render));
+const h = location.hash.slice(1).split(',').map(Number);   // e.g. #55,44,37 opens a preset
+if (h.length === 3 && h.every(x => x > 0)) preset(...h); else render();
+</script>
+</body>
+</html>

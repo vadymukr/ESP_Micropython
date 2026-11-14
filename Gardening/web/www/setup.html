@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"noSwap":[204,304,"5xx"]}'>
+<title>Garden WiFi Setup</title>
+<style>
+:root{--bg:#f4f6f3;--card:#fff;--fg:#1d2420;--muted:#66706a;--line:#dde3de;--acc:#2f7d4f;--warn:#b5491f;--sel:#e3f1e8}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d231f;--fg:#e6ece7;--muted:#97a29b;--line:#2d3530;--acc:#5bbf82;--warn:#f08a5d;--sel:#22362a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0}
+h2{font-size:16px;margin:0 0 10px;display:flex;justify-content:space-between;align-items:center}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}
+.muted{color:var(--muted);font-size:13px}
+.warn{color:var(--warn)}.ok{color:var(--acc)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--muted);margin-right:6px}
+.dot.ok{background:var(--acc)}.dot.wait{background:var(--warn);animation:p 1.2s infinite}
+@keyframes p{50%{opacity:.3}}
+.nets{display:flex;flex-direction:column;gap:6px}
+button.net{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%;background:var(--card);color:var(--fg);border:1px solid var(--line)}
+button.net.sel{background:var(--sel);border-color:var(--acc)}
+button.net small{color:var(--muted);white-space:nowrap}
+form{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:3px}
+label.row{flex-direction:row;align-items:center;gap:6px}
+input,button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+button{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc)}
+button.small{padding:3px 10px;font-size:13px;background:var(--card);color:var(--fg);border-color:var(--line)}
+button.danger{background:var(--warn);border-color:var(--warn);color:#fff}
+.htmx-request .busy{display:inline}.busy{display:none}
+a{color:var(--acc)}
+[x-cloak]{display:none!important}
+</style>
+<script defer src="/alpine.min.js"></script>
+<script src="/htmx.min.js"></script>
+</head>
+<body x-data="{ssid:'', pw:'', show:false, forget:0, pick(s){ this.ssid=s; this.$nextTick(()=>this.$refs.pw.focus()) }}">
+<main>
+<h1>Garden logger &middot; WiFi setup</h1>
+
+<section>
+  <h2>Status</h2>
+  <div id="wstate" hx-get="/wifi/state" hx-trigger="load, every 2s"></div>
+</section>
+
+<section>
+  <h2>Networks
+    <button class="small" hx-get="/wifi/scan?fresh=1" hx-target="#nets">Scan again <span class="busy">&hellip;</span></button>
+  </h2>
+  <div id="nets" hx-get="/wifi/scan" hx-trigger="load"><p class="muted">Scanning&hellip;</p></div>
+
+  <form hx-post="/wifi/connect" hx-target="#wstate">
+    <label>Network name (SSID)<input name="ssid" x-model="ssid" required maxlength="32" autocomplete="off"></label>
+    <label>Password<input name="password" x-ref="pw" x-model="pw" :type="show ? 'text' : 'password'" maxlength="64"></label>
+    <label class="row"><input type="checkbox" x-model="show"> Show password</label>
+    <button>Connect</button>
+  </form>
+  <p class="muted">The board keeps this hotspot on for about 45 s after it connects, then switches it off.
+    Then rejoin your own WiFi and open <a href="http://garden.local/">http://garden.local/</a>.</p>
+</section>
+
+<section>
+  <p><a href="/">&larr; Back to the dashboard</a></p>
+  <span x-show="!forget"><button class="small" @click="forget=1">Forget saved network</button></span>
+  <span x-show="forget" x-cloak>Forget it and start the setup hotspot?
+    <button class="small danger" hx-post="/wifi/forget" hx-target="#wstate" @click="forget=0">Yes</button>
+    <button class="small" @click="forget=0">No</button></span>
+</section>
+</main>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"noSwap":[204,304,"5xx"]}'>
+<title>Garden Logger</title>
+<style>
+:root{--bg:#f4f6f3;--card:#fff;--fg:#1d2420;--muted:#66706a;--line:#dde3de;--acc:#2f7d4f;--warn:#b5491f;--bar:#e3ebe5;
+  --b-wet:#3d7fc4;--b-drain:#6aa6d8;--b-good:#2f9a58;--b-soon:#d3a21a;--b-now:#e0711f;--b-dry:#c63c2c}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d231f;--fg:#e6ece7;--muted:#97a29b;--line:#2d3530;--acc:#5bbf82;--warn:#f08a5d;--bar:#2a332d;
+  --b-wet:#5c9ddf;--b-drain:#86b8e6;--b-good:#4cbb76;--b-soon:#e2b53a;--b-now:#ef8a3e;--b-dry:#e2604f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+h1{font-size:20px;margin:4px 0}
+h2{font-size:16px;margin:0 0 10px}
+h3{font-size:14px;margin:0;font-weight:600}
+small{color:var(--muted);font-weight:400}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px}
+.big{font-size:34px;font-weight:600;font-variant-numeric:tabular-nums}
+.big small{font-size:16px}
+.bar{height:6px;background:var(--bar);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--acc)}
+.muted{color:var(--muted);font-size:13px;margin:6px 0 0}
+.warn{color:var(--warn)}
+.pill{font-size:13px;padding:2px 10px;border-radius:99px;border:1px solid var(--line)}
+.pill.ok{color:var(--acc)}.pill.bad{color:var(--warn)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--muted);margin-right:6px}
+.dot.on{background:#d33;animation:p 1.4s infinite}.dot.wait{background:var(--warn)}
+@keyframes p{50%{opacity:.3}}
+form.rec{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:3px}
+input,select,button{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+button{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc)}
+button.small{padding:2px 8px;font-size:13px;background:var(--card);color:var(--fg);border-color:var(--line)}
+button.danger,button.small.danger{background:var(--warn);border-color:var(--warn);color:#fff}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+.scroll{overflow-x:auto}
+dl.sys{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;font-size:13px;margin:10px 0 0}
+dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+code{font-size:13px}
+[x-cloak]{display:none!important}
+/* watering bands */
+h3{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.wet{--c:var(--b-wet)}.drain{--c:var(--b-drain)}.good{--c:var(--b-good)}.soon{--c:var(--b-soon)}.now{--c:var(--b-now)}.dry{--c:var(--b-dry)}
+.card.band{border-left:4px solid var(--c)}
+.badge{font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;color:#fff;white-space:nowrap;background:var(--c)}
+.scale{position:relative;height:12px;margin:12px 0 18px;display:flex}
+.scale i{display:block;height:100%;background:var(--c)}
+.scale i:first-child{border-radius:6px 0 0 6px}.scale i:last-child{border-radius:0 6px 6px 0}
+.scale .mark{position:absolute;top:-5px;width:4px;height:22px;margin-left:-2px;border-radius:2px;background:var(--fg);box-shadow:0 0 0 2px var(--card)}
+.scale .f{position:absolute;top:14px;font-size:11px;color:var(--muted);transform:translateX(-50%)}
+.scale .f::before{content:'';position:absolute;left:50%;top:-16px;height:14px;border-left:1px dashed var(--muted)}
+.facts{display:grid;grid-template-columns:max-content 1fr;gap:1px 10px;font-size:13px;margin:4px 0 0}
+.facts dt{color:var(--muted)}.facts dd{margin:0;font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-top:10px}
+.legend span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--c);margin-right:5px;vertical-align:-1px}
+.alert{border-radius:8px;padding:8px 10px;margin:0 0 10px;font-size:14px;background:color-mix(in srgb,var(--c) 14%,transparent);border:1px solid color-mix(in srgb,var(--c) 45%,transparent)}
+details summary{cursor:pointer;font-weight:600}
+form.set{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-top:10px}
+.ok{color:var(--acc)}
+</style>
+<script>
+function app(){return{
+  rec:0, clk:1, free:0, mqs:0, mqt:'off', interval:60, hours:24, label:'', last:Date.now(), age:0, confirmStop:0,
+  init(){ setInterval(()=>{this.age=Math.round((Date.now()-this.last)/1000)},1000) },
+  seen(){ this.last=Date.now(); this.age=0 },
+  sync(rec,clk,free,mqs,mqt){ this.rec=rec; this.free=free; this.mqs=mqs; this.mqt=mqt||'off'; if(!rec) this.confirmStop=0;
+    if(!clk && this.clk){ fetch('/time',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'t='+Math.floor(Date.now()/1000)}) }
+    this.clk=clk },
+  get rows(){ return this.hours>0 ? Math.floor(this.hours*3600/this.interval) : 0 },
+  get kb(){ return Math.ceil(this.rows*72/1024) },
+  get perDay(){ return Math.ceil(86400/this.interval*72/1024) }
+}}
+</script>
+<script defer src="/alpine.min.js"></script>
+<script src="/htmx.min.js"></script>
+</head>
+<body x-data="app()">
+<main>
+<header>
+  <h1>Garden moisture logger</h1>
+  <span style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill" x-show="mqs" x-cloak :class="mqs==1?'ok':'bad'" :title="mqt"
+      x-text="mqs==1?'MQTT connected':'MQTT disconnected'"></span>
+    <span class="pill" :class="age<8?'ok':'bad'" x-text="age<8?'live':'offline '+age+' s'">connecting</span></span>
+</header>
+
+<section>
+  <h2>Current values</h2>
+  <div id="live" hx-get="/live" hx-trigger="load, every 2s"><p class="muted">Loading&hellip;</p></div>
+  <div class="legend"><span class="dry">Drought</span><span class="now">Water now</span><span class="soon">Water soon</span>
+    <span class="good">Good</span><span class="drain">Draining after watering</span><span class="wet">Too wet (&gt; F+5)</span>
+    <span style="--c:transparent">F = soil &ldquo;full&rdquo; reading</span></div>
+</section>
+
+<section>
+  <details hx-get="/bands" hx-trigger="toggle once" hx-target="#bands">
+    <summary>Watering bands &ndash; settings</summary>
+    <div id="bands"><p class="muted">Loading&hellip;</p></div>
+    <div id="leds" hx-get="/leds" hx-trigger="htmx:after:swap from:#bands once"></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/pump" hx-trigger="toggle once" hx-target="#pump">
+    <summary>Watering pump</summary>
+    <div id="pump"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/mqtt" hx-trigger="toggle once" hx-target="#mqtt">
+    <summary>MQTT</summary>
+    <div id="mqtt"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/power" hx-trigger="toggle once" hx-target="#power">
+    <summary>Power saving</summary>
+    <div id="power"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <h2>Recording</h2>
+  <form class="rec" x-show="!rec" x-cloak hx-post="/rec/start" hx-target="#status">
+    <label>Interval
+      <select name="interval" x-model.number="interval">
+        <option value="10">10 s</option><option value="30">30 s</option><option value="60">1 min</option>
+        <option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option>
+      </select></label>
+    <label>Duration, hours (0 = until stopped)
+      <input name="hours" type="number" min="0" max="720" step="0.5" x-model.number="hours" style="width:9em"></label>
+    <label>Label (optional)
+      <input name="label" maxlength="20" pattern="[A-Za-z0-9_\-]*" x-model="label" placeholder="after_watering" style="width:12em"></label>
+    <button>Start recording</button>
+  </form>
+  <p class="muted" x-show="!rec" x-cloak>
+    <span x-show="rows">About <b x-text="rows"></b> rows, <b x-text="kb"></b> KB.</span>
+    <span x-show="!rows">About <b x-text="perDay"></b> KB per day.</span>
+    <span x-show="free">Free flash <b x-text="Math.floor(free/1024)"></b> KB.</span>
+    <span class="warn" x-show="rows && kb*1024 > free - 98304">Not enough flash for this duration - recording will stop early.</span>
+  </p>
+  <div x-show="rec" x-cloak>
+    <button class="danger" x-show="!confirmStop" @click="confirmStop=1">Stop recording</button>
+    <span x-show="confirmStop">Stop now?
+      <button class="danger" hx-post="/rec/stop" hx-target="#status">Yes, stop</button>
+      <button class="small" @click="confirmStop=0">Cancel</button></span>
+  </div>
+  <div id="status" hx-get="/status" hx-trigger="load, every 5s"></div>
+</section>
+
+<section>
+  <h2>Latest records</h2>
+  <div id="tail" class="scroll" hx-get="/tail" hx-trigger="load, every 15s"></div>
+</section>
+
+<section>
+  <h2>Recordings <small>CSV, local time</small></h2>
+  <div id="files" class="scroll" hx-get="/files" hx-trigger="load, every 60s"></div>
+</section>
+
+<section>
+  <h2>WiFi</h2>
+  <p><a href="/setup">Open WiFi setup</a> <span class="muted">&middot; scan and join a network, or forget the saved one</span></p>
+</section>
+</main>
+</body>
+</html>
