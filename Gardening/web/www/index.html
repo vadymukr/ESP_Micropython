@@ -68,10 +68,11 @@ form.set{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-top:10px}
 </style>
 <script>
 function app(){return{
-  rec:0, clk:1, free:0, mqs:0, mqt:'off', interval:60, hours:24, label:'', last:Date.now(), age:0, confirmStop:0,
+  rec:0, clk:1, free:0, mqs:0, mqt:'off', off:'', interval:60, hours:24, label:'', last:Date.now(), age:0, confirmStop:0,
   init(){ setInterval(()=>{this.age=Math.round((Date.now()-this.last)/1000)},1000) },
   seen(){ this.last=Date.now(); this.age=0 },
-  sync(rec,clk,free,mqs,mqt){ this.rec=rec; this.free=free; this.mqs=mqs; this.mqt=mqt||'off'; if(!rec) this.confirmStop=0;
+  has(f){ return this.off.indexOf(' '+f+' ')<0 },
+  sync(rec,clk,free,mqs,mqt,off){ this.off=' '+(off||'')+' '; this.rec=rec; this.free=free; this.mqs=mqs; this.mqt=mqt||'off'; if(!rec) this.confirmStop=0;
     if(!clk && this.clk){ fetch('/time',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body:'t='+Math.floor(Date.now()/1000)}) }
     this.clk=clk },
@@ -116,35 +117,35 @@ function app(){return{
   </details>
 </section>
 
-<section>
+<section x-show="has('pump')">
   <details hx-get="/pump" hx-trigger="toggle once" hx-target="#pump">
     <summary>Watering pump</summary>
     <div id="pump"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 
-<section>
+<section x-show="has('mqtt')">
   <details hx-get="/mqtt" hx-trigger="toggle once" hx-target="#mqtt">
     <summary>MQTT</summary>
     <div id="mqtt"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 
-<section>
+<section x-show="has('battery')">
   <details hx-get="/batt" hx-trigger="toggle once" hx-target="#batt">
     <summary>Battery / supply monitor</summary>
     <div id="batt"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 
-<section>
+<section x-show="has('gsm')">
   <details hx-get="/gsm" hx-trigger="toggle once" hx-target="#gsm">
     <summary>GSM &ndash; SMS and GPRS</summary>
     <div id="gsm"><p class="muted">Loading&hellip;</p></div>
   </details>
 </section>
 
-<section>
+<section x-show="has('power')">
   <details hx-get="/power" hx-trigger="toggle once" hx-target="#power">
     <summary>Power saving</summary>
     <div id="power"><p class="muted">Loading&hellip;</p></div>
@@ -153,7 +154,7 @@ function app(){return{
 
 <section>
   <h2>Recording</h2>
-  <form class="rec" x-show="!rec" x-cloak hx-post="/rec/start" hx-target="#status">
+  <form class="rec" x-show="!rec && has('recorder')" x-cloak hx-post="/rec/start" hx-target="#status">
     <label>Interval
       <select name="interval" x-model.number="interval">
         <option value="10">10 s</option><option value="30">30 s</option><option value="60">1 min</option>
@@ -165,7 +166,7 @@ function app(){return{
       <input name="label" maxlength="20" pattern="[A-Za-z0-9_\-]*" x-model="label" placeholder="after_watering" style="width:12em"></label>
     <button>Start recording</button>
   </form>
-  <p class="muted" x-show="!rec" x-cloak>
+  <p class="muted" x-show="!rec && has('recorder')" x-cloak>
     <span x-show="rows">About <b x-text="rows"></b> rows, <b x-text="kb"></b> KB.</span>
     <span x-show="!rows">About <b x-text="perDay"></b> KB per day.</span>
     <span x-show="free">Free flash <b x-text="Math.floor(free/1024)"></b> KB.</span>
@@ -180,7 +181,7 @@ function app(){return{
   <div id="status" hx-get="/status" hx-trigger="load, every 5s"></div>
 </section>
 
-<section>
+<section x-show="has('recorder')">
   <h2>Latest records</h2>
   <div id="tail" class="scroll" hx-get="/tail" hx-trigger="load, every 15s"></div>
 </section>
@@ -188,6 +189,20 @@ function app(){return{
 <section>
   <h2>Recordings <small>CSV, local time</small></h2>
   <div id="files" class="scroll" hx-get="/files" hx-trigger="load, every 60s"></div>
+</section>
+
+<section x-show="has('display')">
+  <details hx-get="/display" hx-trigger="toggle once" hx-target="#display">
+    <summary>Displays &ndash; OLED / TFT</summary>
+    <div id="display"><p class="muted">Loading&hellip;</p></div>
+  </details>
+</section>
+
+<section>
+  <details hx-get="/features" hx-trigger="toggle once" hx-target="#features">
+    <summary>Features &ndash; what this board uses (RAM)</summary>
+    <div id="features"><p class="muted">Loading&hellip;</p></div>
+  </details>
 </section>
 
 <section>

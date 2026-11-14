@@ -127,6 +127,8 @@ def taken_pins(lst, skip_id=None):
     t = {S.I2C_SCL: 'I2C SCL', S.I2C_SDA: 'I2C SDA'}
     for p in S.LED_PINS:
         t[p] = 'LED'
+    for p, lbl in getattr(S, 'BOARD_PINS', {}).items():       # wired on the board (screen, touch...)
+        t[p] = lbl
     for p in S.SENSOR_PWR_PINS:
         t[p] = 'sensor power'
     for k, lbl in (('PUMP_PIN', 'pump'), ('TANK_PIN', 'tank switch'), ('WAKE_TOUCH', 'touch wake'),
@@ -148,6 +150,14 @@ def taken_pins(lst, skip_id=None):
         if r.get('on'):
             for p, c in zip(r['pins'], 'RGB'):
                 t[p] = 'RGB light ' + c
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        with open(S.DATA_DIR + '/display.json') as f:
+            for k, d in enumerate(json.load(f)['list']):
+                for p in ('sck', 'mosi', 'dc', 'rst', 'cs', 'bl', 'touch'):
+                    if d.get(p) is not None:
+                        t[d[p]] = 'display %d %s' % (k + 1, p.upper())
     except (OSError, ValueError, KeyError):
         pass
     for e in lst:

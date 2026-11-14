@@ -6,7 +6,7 @@ try:
 except ImportError:
     import uasyncio as asyncio
 import app
-from app import Sensors, Recorder, uptime, time_ok
+from app import Sensors, uptime, time_ok, has
 import settings as S
 
 
@@ -30,7 +30,11 @@ def quick():
                 await asyncio.sleep_ms(150)
         asyncio.run(burst())
         pcts = [sens.pct(sens.raw[i], c[2], c[3]) for i, c in enumerate(sens.ch)]
-        r = Recorder(sens)
+        if has('recorder'):
+            from recorder import Recorder
+            r = Recorder(sens)
+        else:
+            r = app.NoRec()
         if r.resume and time_ok():
             now = time.time()
             if r.end and now >= r.end:

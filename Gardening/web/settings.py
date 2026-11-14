@@ -1,5 +1,15 @@
 # Settings for the garden moisture logger web app (ESP32 WROOM, MicroPython 1.29)
 
+# Features this board uses (default; the dashboard Features panel overrides it, /data/features.json).
+# A feature left out is never imported: its code takes no RAM and its panel is hidden.
+#   pump      watering pump (PUMP_PIN)         mqtt      MQTT publisher
+#   gsm       SIM800L SMS / calls / GPRS       battery   battery / supply monitor
+#   leds      4-LED band indicator             rgb       RGB status light
+#   power     power saving / sleep cycle       recorder  CSV recording to flash
+#   display   OLED / TFT screens (Displays panel)
+# Soil sensors, the air sensor and the sensor registry are always on.
+FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display')
+
 # Soil sensors TEMPLATE: (gpio, dry_raw, wet_raw, name). Used only to create the sensor list the first
 # time; after that sensors are added / calibrated / removed from the dashboard Sensors panel
 # (/data/sensors.json). Raw = 12-bit ADC average, 11 dB attenuation.
@@ -119,6 +129,7 @@ import os as _os
 _m = _os.uname().machine.upper()
 CHIP = 'esp32c3' if 'C3' in _m else 'esp32s3' if 'S3' in _m else 'esp32c6' if 'C6' in _m else 'esp32'
 BOARD = 'devkit'              # 'devkit' = plain board | 'ttgo-tcall' = TTGO T-Call V1.4 (ESP32 + SIM800L)
+                              # | 'cyd' = ESP32-2432S028 "Cheap Yellow Display" (2.8" touch screen)
 
 if CHIP == 'esp32':           # classic ESP32 (WROOM / WROVER)
     ADC_PINS = (32, 33, 34, 35, 36, 39)
@@ -157,3 +168,22 @@ if BOARD == 'ttgo-tcall':     # TTGO T-Call V1.4: SIM800L on 26/27, power 23, PW
     PUMP_PIN = 18             # 23 belongs to the modem here
     LED_PINS = ()             # 26/27 belong to the modem
     UART_IDS = (1,)           # UART2 = modem
+
+if BOARD == 'cyd':            # ESP32-2432S028: ILI9341 240x320 on 14/13/15/2, backlight 21, XPT2046 touch
+    # 25/32/33/36/39, RGB LED 4/16/17 (lit when LOW), light sensor 34, speaker 26, SD card 5/18/19/23.
+    # Free: CN1 = GPIO22 + GPIO27 (used as I2C for the air sensor), P3 = GPIO35 (input, ADC: one soil
+    # sensor). For a pump give up I2C (PUMP_PIN = 22) or use an SD-slot breakout for 5/18/19/23.
+    # Newer boards with an ST7789 instead of the ILI9341: set 'type': 'st7789-320' below.
+    ADC_PINS = (35,)
+    IO_PINS = (22, 27)
+    I2C_SDA, I2C_SCL = 27, 22
+    SENSORS = ((35, 3390, 1669, 'Sensor A'),)                 # recalibrate on this board
+    PUMP_PIN, LED_PINS, BATT_PIN = None, (), None
+    RGB_PINS, RGB_ANODE = (4, 16, 17), True
+    UART_IDS = (1,)
+    BOARD_PINS = {14: 'screen SCK', 13: 'screen MOSI', 12: 'screen MISO', 15: 'screen CS', 2: 'screen DC',
+                  21: 'backlight', 25: 'touch CLK', 32: 'touch MOSI', 39: 'touch MISO', 33: 'touch CS',
+                  36: 'touch IRQ', 34: 'light sensor', 26: 'speaker', 4: 'RGB LED', 16: 'RGB LED', 17: 'RGB LED'}
+    DISPLAY_BUILTIN = {'type': 'ili9341-320', 'sck': 14, 'mosi': 13, 'dc': 2, 'cs': 15, 'rst': None, 'bl': 21,
+                       'touch': 36, 'rot': 90, 'pages': ['soil', 'all', 'air', 'clock'], 'page_s': 6,
+                       'bright': 80, 'off': '', 'xoff': 0, 'yoff': 0}

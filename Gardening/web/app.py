@@ -54,6 +54,27 @@ def flash_free():
     return st[0] * st[4]
 
 
+# ---------------------------------------------------------------- features
+# What this board uses: settings.FEATURES, or the Features panel (DATA_DIR/features.json, applied
+# after a restart). A feature that is off is never imported, so its code takes no RAM.
+FEATURES = ('pump', 'mqtt', 'gsm', 'battery', 'leds', 'rgb', 'power', 'recorder', 'display')
+
+
+def _features():
+    try:
+        with open(S.DATA_DIR + '/features.json') as f:
+            return tuple(json.load(f)['on'])
+    except (OSError, ValueError, KeyError):
+        return tuple(getattr(S, 'FEATURES', FEATURES))
+
+
+FEAT = _features()
+
+
+def has(f):
+    return f in FEAT
+
+
 def time_ok():
     return time.gmtime()[0] >= 2025
 
@@ -289,145 +310,17 @@ class Sensors:
         self.updated = uptime()
 
 
-# ---------------------------------------------------------------- recorder
-REC_STATE = S.DATA_DIR + '/rec.json'
+class NoRec:
+    """Stand-in while the recorder feature is off (recorder.py not loaded)."""
+    active = resume = False
+    fname = msg = ''
+    rows = interval = end = started = 0
 
-
-class Recorder:
-    def __init__(self, sens):
-        self.sens = sens
-        self.active = self.resume = False
-        self.fname = ''
-        self.interval = 60
-        self.end = self.started = self.rows = self.next = 0
-        self.msg = ''
-        try:
-            os.mkdir(S.DATA_DIR)
-        except OSError:
-            pass
-        try:
-            with open(REC_STATE) as f:
-                st = json.load(f)
-            if st.get('active') and safe_csv(st.get('fname')):
-                self.fname, self.interval = st['fname'], st['interval']
-                self.end, self.started = st['end'], st['started']
-                self.resume = True           # picked up by run() once the clock is valid
-        except (OSError, ValueError, KeyError):
-            pass
-
-    def path(self, name=None):
-        return S.DATA_DIR + '/' + (name or self.fname)
-
-    def _save(self):
-        with open(REC_STATE, 'w') as f:
-            json.dump({'active': self.active or self.resume, 'fname': self.fname,
-                       'interval': self.interval, 'end': self.end, 'started': self.started}, f)
-
-    def _header(self):
-        cols = ['timestamp', 'elapsed_s', 'air_temp_c', 'air_rh_pct', 'air_hpa']
-        for c in self.sens.ch:
-            cols.append('gpio%d_raw' % c[0])
-            cols.append('gpio%d_pct' % c[0])
-        for g in self.sens.gch:
-            cols.append('%s_%s' % (g[6], g[2]))      # e.g. S3_v (registry sensor id + channel)
-        cols.append('samples')
-        return ','.join(cols) + '\n'
-
-    def start(self, interval, hours, label):
-        if self.active or self.resume:
-            return 'Already recording.'
-        if not time_ok():
-            return 'Clock not set yet - wait a few seconds or reload the page.'
-        if flash_free() < S.MIN_FREE_FLASH:
-            return 'Not enough free flash - delete old recordings first.'
-        now = time.time()
-        name = stamp(now, False).replace('-', '').replace(' ', '_').replace(':', '')
-        if label:
-            name += '_' + label
-        self.fname = name + '.csv'
-        self.interval, self.started = interval, now
-        self.end = now + int(hours * 3600) if hours > 0 else 0
-        with open(self.path(), 'w') as f:
-            f.write(self._header())
-        self.rows = 0
-        self.sens.acc_reset()
-        self.next = now + interval
-        self.active = True
-        self.msg = ''
-        self._save()
-        print('rec: start', self.fname, interval, 's')
-        return ''
-
-    def stop(self, why='Stopped'):
-        self.active = self.resume = False
-        self.msg = '%s at %s.' % (why, stamp())
-        self._save()
-        print('rec:', self.msg)
-
-    def _row(self, now):
-        s = self.sens
-        if not s.acc_n:
-            return
-        p = [stamp(now), str(now - self.started)]
-        p.append('%.2f' % (s.acc_t / s.acc_tn) if s.acc_tn else '')
-        p.append('%.1f' % (s.acc_rh / s.acc_hn) if s.acc_hn else '')
-        p.append('%.1f' % (s.acc_p / s.acc_pn) if s.acc_pn else '')
-        for i, c in enumerate(s.ch):
-            r = s.acc_raw[i] / s.acc_n
-            p.append('%.1f' % r)
-            p.append('%.1f' % s.pct(r, c[2], c[3]))
-        for j, g in enumerate(s.gch):
-            p.append(('%%.%df' % g[5]) % (s.acc_g[j] / s.acc_gn[j]) if s.acc_gn[j] else '')
-        p.append(str(s.acc_n))
-        with open(self.path(), 'a') as f:
-            f.write(','.join(p) + '\n')
-        self.rows += 1
-        s.acc_reset()
-
-    def _count_rows(self):
-        n, buf = 0, bytearray(512)
-        try:
-            with open(self.path(), 'rb') as f:
-                while True:
-                    k = f.readinto(buf)
-                    if not k:
-                        break
-                    n += bytes(buf[:k]).count(b'\n')
-        except OSError:
-            pass
-        return max(0, n - 1)
+    def stop(self, msg=''):
+        pass
 
     async def run(self):
-        while True:
-            await asyncio.sleep(1)
-            try:
-                now = time.time()
-                if self.resume and time_ok():
-                    self.resume = False
-                    if self.end and now >= self.end:
-                        self.stop('Finished (while powered off)')
-                        continue
-                    self.rows = self._count_rows()
-                    self.sens.acc_reset()
-                    self.next = now + self.interval
-                    self.active = True
-                    self.msg = 'Resumed after restart at %s.' % stamp()
-                    print('rec:', self.msg)
-                if not self.active:
-                    continue
-                if now >= self.next:
-                    self._row(now)
-                    self.next += self.interval
-                    if self.next <= now:         # clock jumped forward
-                        self.next = now + self.interval
-                    if flash_free() < S.MIN_FREE_FLASH:
-                        self.stop('Stopped: flash nearly full')
-                    elif os.stat(self.path())[6] > S.MAX_FILE_BYTES:
-                        self.stop('Stopped: file size limit reached')
-                if self.active and self.end and now >= self.end:
-                    self.stop('Finished')
-            except Exception as e:
-                self.stop('Stopped: error %s' % e)
+        pass
 
 
 # ---------------------------------------------------------------- network (WiFi manager)
@@ -742,12 +635,14 @@ def frag_status(msg=''):
     r, n = rec, net
     heap_note()
     rec_on = 1 if (r.active or r.resume) else 0
-    out = ['<i hidden x-init="sync(%d,%d,%d,%d,$el.dataset.mqt)" data-mqt="%s"></i>'
+    out = ['<i hidden x-init="sync(%d,%d,%d,%d,$el.dataset.mqt,$el.dataset.off)" data-mqt="%s" data-off="%s"></i>'
            % (rec_on, 1 if time_ok() else 0, flash_free(), mqtt.state() if mqtt else 0,
-              esc(mqtt.status()) if mqtt else 'off')]
+              esc(mqtt.status()) if mqtt else 'off', ' '.join(k for k in FEATURES if k not in FEAT))]
     if msg:
         out.append('<p class="warn">%s</p>' % esc(msg))
-    if r.active:
+    if not has('recorder'):
+        pass
+    elif r.active:
         line = 'every %s &middot; %d rows &middot; running %s' % (dur(r.interval), r.rows, dur(time.time() - r.started))
         if r.end:
             line += ' &middot; ends %s (in %s)' % (stamp(r.end, False), dur(max(0, r.end - time.time())))
@@ -844,7 +739,7 @@ STATIC = {
     '/setup': ('setup.html.gz', HTML, 'no-store'),
 }
 POLLS = ('/live', '/status', '/tail', '/files', '/wifi/state', '/favicon.ico', '/htmx.min.js', '/alpine.min.js')
-KNOWN = ('/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
+KNOWN = ('/features', '/display', '/live', '/status', '/tail', '/files', '/dl', '/wifi/', '/rec/', '/time', '/favicon', '/bands', '/leds', '/power',
          '/pump', '/mqtt', '/batt', '/sensors', '/rgb', '/gsm')
 CAPTIVE = ('/generate_204', '/gen_204', '/hotspot-detect.html', '/library/test/success.html',
            '/ncsi.txt', '/connecttest.txt', '/redirect', '/success.txt', '/canonical.html')
@@ -878,10 +773,17 @@ async def route(w, method, path, q, f):
     if path == '/files':
         return await send(w, ui('ui_files', 'frag_files'))
     seg = path.split('/')[1]
-    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb', 'gsm'):
+    if seg == 'features':
+        return await send(w, ui('ui_feat', 'handle', method, path, f))
+    need = {'leds': 'leds', 'power': 'power', 'pump': 'pump', 'mqtt': 'mqtt', 'batt': 'battery', 'rgb': 'rgb',
+            'gsm': 'gsm', 'rec': 'recorder', 'display': 'display'}.get(seg)
+    if need and not has(need):
+        return await send(w, '' if seg in ('leds', 'rgb') else
+                          '<p class="muted">Switched off in <b>Features</b> (not loaded, no RAM used).</p>')
+    if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors', 'rgb', 'gsm', 'display'):
         import sys
         name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors',
-                'rgb': 'ui_rgb', 'gsm': 'ui_gsm'}.get(seg, 'ui_cfg')
+                'rgb': 'ui_rgb', 'gsm': 'ui_gsm', 'display': 'ui_display'}.get(seg, 'ui_cfg')
         if path in ('/sensors/save', '/sensors/del', '/sensors/cap', '/sensors/cal'):
             name = 'ui_sensors_set'
         gc.collect()                           # settings panels: loaded per request, then released
@@ -893,7 +795,8 @@ async def route(w, method, path, q, f):
             del sys.modules[name]
             # helper modules a panel imported only for its settings (gsm.py ~14 KB): released
             # again while their feature is off (module name -> global holding the running object)
-            for m, o in (('gsm', 'gsm'), ('rgb', 'rgb'), ('mqtt', 'mqtt'), ('battery', 'batt'), ('leds', 'leds')):
+            for m, o in (('gsm', 'gsm'), ('rgb', 'rgb'), ('mqtt', 'mqtt'), ('battery', 'batt'), ('leds', 'leds'),
+                         ('display', 'disp'), ('gfont', 'disp')):
                 if m in sys.modules and globals()[o] is None:
                     del sys.modules[m]
         if html is not None:
@@ -1006,7 +909,7 @@ async def handle(r, w):
 
 
 # ---------------------------------------------------------------- main
-sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = gsm = None
+sens = rec = net = bands = leds = batt = pwr = pump = mqtt = rgb = gsm = disp = None
 
 
 def restart_soon(secs=2):
@@ -1051,6 +954,48 @@ def mqtt_start():
             pump.on_event = mqtt.event
         asyncio.create_task(mqtt.run(None, _online))      # mqtt.snapshot() builds the JSON
     return mqtt
+
+
+def _displays():
+    """Any display set up (display.json) - checked without importing display.py."""
+    try:
+        with open(S.DATA_DIR + '/display.json') as f:
+            return bool(json.load(f).get('list'))
+    except (OSError, ValueError):
+        return getattr(S, 'DISPLAY_BUILTIN', None) is not None       # board with its own screen
+
+
+def display_apply():
+    """Displays from display.json: create, reconfigure, or unload everything when none is left."""
+    global disp
+    import sys
+    from display import Display, load_cfg
+    c = load_cfg()
+    if disp:
+        disp.reconfig(c)                     # an empty list ends its task
+        if not c['list']:
+            disp = None
+    elif c['list']:
+        disp = Display(c, sens)
+        asyncio.create_task(disp.run())
+    if disp is None:
+        for m in ('display', 'disp_oled', 'disp_tft', 'gfont'):
+            if m == 'gfont' and m in sys.modules:
+                sys.modules[m].close_all()
+            sys.modules.pop(m, None)
+    return disp
+
+
+def display_apply_soon():
+    """From the panel: apply after the reply is sent and the panel module is released (RAM)."""
+    async def _go():
+        await asyncio.sleep_ms(300)
+        gc.collect()
+        try:
+            display_apply()
+        except Exception as e:
+            print('display:', repr(e))
+    asyncio.create_task(_go())
 
 
 def _gsm_enabled():
@@ -1113,10 +1058,12 @@ async def _main():
     if pwr:
         asyncio.create_task(pwr.run(lambda: net.ap.active() or net.pending is not None or (pump is not None and pump.busy()),
                                     _before_sleep, lambda: batt is not None and batt.state != 'ok'))
-    if _mqtt_enabled():
+    if has('mqtt') and _mqtt_enabled():
         mqtt_start()
-    if _gsm_enabled():
+    if has('gsm') and _gsm_enabled():
         gsm_start()
+    if has('display') and _displays():
+        display_apply()
     await asyncio.start_server(handle, '0.0.0.0', S.HTTP_PORT, backlog=5)
     print('http: listening on port', S.HTTP_PORT, '- free heap', gc.mem_free())
     while True:
@@ -1126,6 +1073,8 @@ async def _main():
 def _before_sleep():
     if rgb:
         rgb.off()
+    if disp:
+        disp.off()
     if pump:
         pump.stop('going to sleep')
         pump._set(False)
@@ -1202,22 +1151,22 @@ def leds_start():
 def _optional():
     """Optional modules: not imported (no RAM) when not configured."""
     global leds, batt, pump, rgb
-    if rgb is None and _rgb_enabled():
+    if rgb is None and has('rgb') and _rgb_enabled():
         rgb_apply(False)                     # task started in _main (or flash_once in a quick wake)
-    if getattr(S, 'PUMP_PIN', None) is not None and pump is None:
+    if has('pump') and getattr(S, 'PUMP_PIN', None) is not None and pump is None:
         from pump import Pump                # drives the pump pin OFF first thing
         pump = Pump(uptime, time_ok)
-    if S.LED_PINS and leds_mode() != 'off':     # LEDs off: module not loaded (RAM)
+    if has('leds') and S.LED_PINS and leds_mode() != 'off':     # LEDs off: module not loaded (RAM)
         from leds import Leds
         leds = Leds(S.LED_PINS, S.LED_ACTIVE_HIGH)
-    if batt_enabled():                         # off: battery.py not loaded
+    if has('battery') and batt_enabled():      # off: battery.py not loaded
         batt_apply()
 
 
 def main():
     global sens, rec, net, bands, leds, batt, pwr, pump
     from bands import Bands
-    if S.POWER_ENABLED and pwr is None:  # sets the CPU clock first
+    if has('power') and S.POWER_ENABLED and pwr is None:  # sets the CPU clock first
         from power import Power
         pwr = Power(uptime, time_ok)
     sens = Sensors()
@@ -1227,7 +1176,11 @@ def main():
     if pump:
         pump.bands = bands
         pump.sens = sens                     # flow sensor protection / water statistics
-    rec = Recorder(sens)
+    if has('recorder'):
+        from recorder import Recorder
+        rec = Recorder(sens)
+    else:
+        rec = NoRec()
     net = Net()
     gc.collect()
     asyncio.run(_main())

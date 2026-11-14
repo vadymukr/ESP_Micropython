@@ -18,7 +18,7 @@ from machine import Pin, PWM
 import settings as S
 
 CFG = S.DATA_DIR + '/rgb.json'
-DEFAULTS = {'on': False, 'pins': [25, 26, 27], 'anode': False, 'mode': 'on', 'bright': 60, 'sensor': -1}
+DEFAULTS = {'on': False, 'pins': list(getattr(S, 'RGB_PINS', (25, 26, 27))), 'anode': getattr(S, 'RGB_ANODE', False), 'mode': 'on', 'bright': 60, 'sensor': -1}
 COLOR = {'good': (0, 1, 0), 'soon': (1, 0.6, 0), 'now': (1, 0, 0), 'dry': (1, 0, 0), 'wet': (0, 0, 1),
          'drain': (0, 0.6, 1), 'fault': (1, 0, 1)}
 BLINK = ('dry', 'fault')

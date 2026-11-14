@@ -13,7 +13,8 @@
 #                  flash: ~35 KB more free RAM), same backup + verify steps
 #   --spiram       classic ESP32 with external PSRAM (WROVER) -> SPIRAM firmware. Not needed for
 #                  chips with PSRAM inside (detected) or with --board ttgo-tcall (implied)
-#   --board NAME   devkit | ttgo-tcall: wiring profile written into the uploaded settings.py.
+#   --board NAME   devkit | ttgo-tcall | cyd (ESP32-2432S028): wiring profile written into the uploaded
+#                  settings.py.
 #                  Without it the profile already on the board is kept.
 #
 #   Firmware per detected chip (downloaded from micropython.org, file name looked up there):
@@ -60,14 +61,14 @@ for a in "$@"; do
     --spiram) SPIRAM=1 ;;
     --board=*) BOARD_SET="${a#--board=}" ;;
     --board) NEXT_BOARD=1; continue ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     -*) echo "unknown option $a" >&2; exit 2 ;;
     *) PORT="$a" ;;
   esac
 done
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-case "$BOARD_SET" in ""|devkit|ttgo-tcall) ;; *) die "unknown board '$BOARD_SET' (devkit | ttgo-tcall)" ;; esac
+case "$BOARD_SET" in ""|devkit|ttgo-tcall|cyd) ;; *) die "unknown board '$BOARD_SET' (devkit | ttgo-tcall | cyd)" ;; esac
 [[ "$BOARD_SET" == ttgo-tcall ]] && SPIRAM=1          # T-Call V1.4 = ESP32-WROVER-B (8 MB PSRAM)
 
 norm() { [[ "$1" =~ ^[0-9]+\.[0-9]+$ ]] && echo "$1.0" || echo "$1"; }   # 1.13 -> 1.13.0 (as the board reports)
@@ -239,9 +240,11 @@ rm -rf "$BUILD"; mkdir -p "$BUILD/www"
 "$MPYCROSS" -O1 -o "$BUILD/mqtt.mpy" ../mqtt.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_pump.mpy" ui_pump.py
 "$MPYCROSS" -O1 -o "$BUILD/ui_mqtt.mpy" ui_mqtt.py
-for m in ui_wifi ui_files captive ui_batt ui_sensors ui_sensors_set ui_rgb ui_gsm; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
+for m in ui_wifi ui_files captive ui_batt ui_sensors ui_sensors_set ui_rgb ui_gsm ui_feat ui_display; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
 "$MPYCROSS" -O1 -o "$BUILD/sensors.mpy" ../sensors.py
 "$MPYCROSS" -O1 -o "$BUILD/gsm.mpy" ../gsm.py
+"$MPYCROSS" -O1 -o "$BUILD/recorder.mpy" ../recorder.py
+for m in display disp_oled disp_tft gfont; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" ../$m.py; done
 "$MPYCROSS" -O1 -o "$BUILD/rgb.mpy" ../rgb.py           # sensor registry + one file per driver type
 for f in ../drv_*.py; do "$MPYCROSS" -O1 -o "$BUILD/$(basename "${f%.py}").mpy" "$f"; done
 cp main.py settings.py "$BUILD/"
@@ -265,10 +268,10 @@ for f in www/*; do gzip -9 -n -c "$f" > "$BUILD/$f.gz"; done
 echo "== uploading"
 MP="$VENV/mpremote connect $PORT"
 $MP exec "import os
-for d in ('www','data'):
+for d in ('www','data','fonts'):
     try: os.mkdir(d)
     except OSError: pass
-for f in ('aht10.py','app.py','climate.py','bands.py','leds.py','battery.py','power.py','ui_cfg.py','cycle.py','pump.py','mqtt.py','ui_pump.py','ui_mqtt.py','ui_wifi.py','ui_files.py','captive.py','ui_batt.py','ui_sensors.py','ui_sensors_set.py','ui_rgb.py','rgb.py','ui_gsm.py','gsm.py','sensors.py','drv_analog.py'):
+for f in ('aht10.py','app.py','climate.py','bands.py','leds.py','battery.py','power.py','ui_cfg.py','cycle.py','pump.py','mqtt.py','ui_pump.py','ui_mqtt.py','ui_wifi.py','ui_files.py','captive.py','ui_batt.py','ui_sensors.py','ui_sensors_set.py','ui_rgb.py','rgb.py','ui_gsm.py','gsm.py','ui_feat.py','recorder.py','sensors.py','drv_analog.py'):
     try: os.remove(f)
     except OSError: pass" >/dev/null
 MODS="app aht10 climate bands leds battery power ui_cfg cycle"
@@ -283,11 +286,12 @@ if [[ -n "$FROZEN" ]]; then
 for m in '$MODS'.split():
     try: os.remove(m + '.mpy')
     except OSError: pass" >/dev/null
-  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
 else
-  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
+  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/sensors.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" : >/dev/null
 fi
 $MP cp "$BUILD"/www/*.gz :www/ >/dev/null
+$MP cp fonts/*.bin :fonts/ >/dev/null          # display fonts (read from flash glyph by glyph)
 if [[ -f wifi.json ]]; then $MP cp wifi.json :wifi.json >/dev/null; echo "   uploaded wifi.json"; fi
 $MP exec "import os; print('   board:', os.listdir(), os.listdir('www'))"
 $MP reset
