@@ -153,11 +153,12 @@ class Sensors:
         self._backoff = S.AIR_RETRY_S[0]
         self._next_try = 0                   # uptime() of the next detect attempt
         self._clim_init()                    # also creates the shared I2C bus (self.i2c)
+        self.uart_free = [1, 2]              # UART ids for UART sensors (0 = USB console)
         for e in self.reg:                   # other sensors: drivers get this object as ctx (ctx.i2c)
             if e['type'] == 'soil':
                 continue
             try:
-                d = __import__('drv_' + e['type']).Driver(e, self)
+                d = __import__('drv_' + (e.get('drv') or e['type'])).Driver(e, self)
                 gi = len(self.gen)
                 self.gen.append(d)
                 for k, (key, label, unit, dec) in enumerate(d.chans()):
@@ -872,7 +873,7 @@ async def route(w, method, path, q, f):
     if seg in ('bands', 'leds', 'power', 'pump', 'mqtt', 'batt', 'sensors'):
         import sys
         name = {'pump': 'ui_pump', 'mqtt': 'ui_mqtt', 'batt': 'ui_batt', 'sensors': 'ui_sensors'}.get(seg, 'ui_cfg')
-        if path in ('/sensors/save', '/sensors/del', '/sensors/cap'):
+        if path in ('/sensors/save', '/sensors/del', '/sensors/cap', '/sensors/cal'):
             name = 'ui_sensors_set'
         gc.collect()                           # settings panels: loaded per request, then released
         mod = __import__(name)

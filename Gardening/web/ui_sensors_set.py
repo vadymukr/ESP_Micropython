@@ -115,6 +115,20 @@ def _do(R, path, f):
                 sn.ch[i] = (c[0], c[1], e['dry'], e['wet'], c[4], sid)
                 return done('%s: %s = %d.' % (e['name'], w, raw))
         return bad('Sensor not active yet.')
+    if path == '/sensors/cal':                  # driver calibration button (MQ R0, ACS758 zero, ...)
+        sid = f.get('id')
+        for d in sn.gen:
+            if d.e['id'] == sid and hasattr(d, 'cal'):
+                try:
+                    key, val = d.cal()
+                except Exception as ex:
+                    return bad('Not calibrated: %s' % ex)
+                e = [x for x in lst if x['id'] == sid][0]
+                e[key] = val
+                d.e = e
+                R.save(lst)
+                return done('%s: %s = %s.' % (e['name'], key, val))
+        return bad('Sensor not running.')
     if path == '/sensors/del':
         sid = f.get('id')
         old = [dict(x) for x in lst]
@@ -130,7 +144,7 @@ def _do(R, path, f):
         sid, typ = f.get('id', ''), f.get('type', '')
         if typ not in R.TYPES:
             return bad('Unknown type.')
-        label, kind, form = R.TYPES[typ]
+        kind, form, drv = R.TYPES[typ][1], R.TYPES[typ][2], R.TYPES[typ][3]
         name = f.get('name', '').strip()[:20]
         if not name or any(ch not in NAME_OK for ch in name):
             return bad('Name: letters, digits, space, - _ . #')
@@ -139,14 +153,23 @@ def _do(R, path, f):
         if not cur and len(lst) >= MAX_SENSORS:
             return bad('At most %d sensors (RAM).' % MAX_SENSORS)
         e = {'id': cur['id'] if cur else R.new_id(lst), 'type': typ, 'name': name}
+        if drv:
+            e['drv'] = drv                        # shared driver module, e.g. all MQ types -> drv_mq
         if kind != 'i2c':
-            try:
-                pin = int(f.get('pin', ''))
-            except ValueError:
-                return bad('Choose a pin.')
-            if pin not in R.free_pins(kind, lst, sid or None):
-                return bad('GPIO%d is not free or not suitable for this type.' % pin)
-            e['pin'] = pin
+            free = R.free_pins(kind, lst, sid or None)
+            for key in (('pin', 'pin2') if kind == 'uart' else ('pin',)):
+                try:
+                    p = int(f.get(key, ''))
+                except ValueError:
+                    return bad('Choose a pin.')
+                if p not in free:
+                    return bad('GPIO%d is not free or not suitable for this type.' % p)
+                e[key] = p
+            if kind == 'uart':
+                if e['pin'] == e['pin2']:
+                    return bad('RX and TX must be different pins.')
+                if not cur and len([x for x in lst if R.TYPES.get(x['type'], ('', ''))[1] == 'uart']) >= 2:
+                    return bad('At most 2 UART sensors (the ESP32 has 2 free UARTs).')
         try:
             for key, lbl, t, dflt in form:
                 if t == 'text':
@@ -161,7 +184,7 @@ def _do(R, path, f):
                     e[key] = int(_num(f, key, 11, 22))
                     if e[key] not in (11, 22):
                         raise ValueError('model must be 11 or 22')
-                elif key in ('ppl', 'shunt'):
+                elif key in ('ppl', 'shunt', 'rl', 'div', 'vc', 'r0', 'mv_a'):
                     e[key] = _num(f, key, 0.001, 100000)
                 else:
                     e[key] = _num(f, key, -1e6, 1e6)
@@ -188,7 +211,8 @@ def _do(R, path, f):
             _soil_changed(old, new)
             _mqtt_fields(add=e['id'])
             return _restart(new, 'Added %s.' % name, True)
-        if cur.get('pin') != e.get('pin') or cur.get('addr') != e.get('addr') or typ == 'ds18b20':
+        if (cur.get('pin') != e.get('pin') or cur.get('pin2') != e.get('pin2') or cur.get('addr') != e.get('addr')
+                or typ == 'ds18b20'):
             new = [e if x['id'] == sid else x for x in lst]   # moved (or 1-Wire rescan): hardware changes
             return _restart(new, 'Saved.', typ == 'soil')     # soil CSV columns are named after the pin
         cur.update(e)                             # name / calibration: apply now

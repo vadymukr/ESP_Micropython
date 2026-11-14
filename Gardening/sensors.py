@@ -7,7 +7,8 @@
 #              "lo_mv": 0, "lo": 0, "hi_mv": 3000, "hi": 100, "dec": 1}]}
 #
 # Adding a sensor TYPE later = an entry in TYPES below (name, pin kind, form fields) + a driver
-# module drv_<type>.py with a class Driver(entry, ctx) (ctx.i2c = the shared I2C bus):
+# module drv_<type>.py with a class Driver(entry, ctx) (ctx.i2c = the shared I2C bus, ctx.uart_free =
+# free UART ids, ctx.t / ctx.rh = air temperature / humidity), optional cal() for a calibrate button:
 # chans() -> [(key, label, unit, decimals)],
 # read() -> [value or None per channel], and a short 'info' text. Nothing else in the app changes:
 # every channel automatically gets a dashboard card, an MQTT field and a CSV column.
@@ -20,28 +21,54 @@ CFG = S.DATA_DIR + '/sensors.json'
 ADC_PINS = (32, 33, 34, 35, 36, 39)            # ADC1: works with WiFi on (ADC2 does not)
 IO_PINS = (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)   # free of boot straps / flash
 
-# type -> (label, pin kind, form fields [(key, label, 'num'|'text', default)])
-#   pin kinds: 'adc' = ADC1 pin, 'io' = free GPIO, 'i2c' = shared I2C bus (I2C_SDA/I2C_SCL), address
+# type -> (label, pin kind, form fields [(key, label, 'num'|'text', default)], driver, calibrate button)
+#   pin kinds: 'adc' = ADC1 pin, 'io' = free GPIO, 'i2c' = shared I2C bus (address field),
+#              'uart' = two free GPIOs (pin = RX from the sensor's TX, pin2 = TX to the sensor's RX)
+#   driver: module drv_<driver>.py (None = drv_<type>.py); calibrate: button label, the driver's
+#   cal() returns (key, value) to store, e.g. MQ 'R0 = now (clean air)'.
 # Soil defaults = the 2026-11-02 calibration of this probe model (average of the two probes:
 # A 3390/1669, B 3443/1633); use Dry/Wet = now in the panel for each new probe.
 SOIL_DRY, SOIL_WET = 3416, 1651
+_I2C = lambda a: [('addr', 'Address hex', 'text', a)]
+_MQ = [('rl', 'Load RL, k&Omega;', 'num', 10), ('div', 'Divider ratio', 'num', 2.22), ('vc', 'Supply, V', 'num', 5.0),
+       ('r0', 'R0, k&Omega;', 'num', 10)]
+_R0 = 'R0 = now (clean air)'
 TYPES = {
     'soil': ('Soil moisture (capacitive)', 'adc',
-             [('dry', 'Dry raw (in air)', 'num', SOIL_DRY), ('wet', 'Wet raw (in water)', 'num', SOIL_WET)]),
+             [('dry', 'Dry raw (in air)', 'num', SOIL_DRY), ('wet', 'Wet raw (in water)', 'num', SOIL_WET)], None, None),
     'analog': ('Analog sensor (linear scale)', 'adc',
                [('unit', 'Unit', 'text', ''), ('lo_mv', 'Input low, mV', 'num', 0), ('lo', '= value', 'num', 0),
-                ('hi_mv', 'Input high, mV', 'num', 3000), ('hi', '= value', 'num', 100), ('dec', 'Decimals', 'num', 1)]),
-    'ds18b20': ('DS18B20 temperature, 1-Wire (several per pin)', 'io', []),
-    'dht': ('DHT11 / DHT22 temperature + humidity', 'io', [('model', 'Model (11 or 22)', 'num', 22)]),
+                ('hi_mv', 'Input high, mV', 'num', 3000), ('hi', '= value', 'num', 100), ('dec', 'Decimals', 'num', 1)],
+               None, None),
+    'mq2': ('MQ-2 gas: LPG / smoke (analog)', 'adc', _MQ, 'mq', _R0),
+    'mq4': ('MQ-4 gas: methane (analog)', 'adc', _MQ, 'mq', _R0),
+    'mq6': ('MQ-6 gas: LPG / butane (analog)', 'adc', _MQ, 'mq', _R0),
+    'mq7': ('MQ-7 gas: carbon monoxide (analog)', 'adc', _MQ, 'mq', _R0),
+    'mq9': ('MQ-9 gas: CO / flammable (analog)', 'adc', _MQ, 'mq', _R0),
+    'mq135': ('MQ-135 air quality / CO2 (analog)', 'adc', _MQ, 'mq', _R0),
+    'acs758': ('ACS758 Hall current sensor (analog)', 'adc',
+               [('mv_a', 'mV per A', 'num', 40), ('zero_mv', 'Zero, mV', 'num', 2500), ('div', 'Divider ratio', 'num', 2.22)],
+               None, 'Zero = now (no current)'),
+    'uv': ('UV sensor GUVA-S12SD (analog)', 'adc', [], None, None),
+    'ds18b20': ('DS18B20 temperature, 1-Wire (several per pin)', 'io', [], None, None),
+    'dht': ('DHT11 / DHT22 temperature + humidity', 'io', [('model', 'Model (11 or 22)', 'num', 22)], None, None),
     'digital': ('Digital input (float / rain / door switch)', 'io',
-                [('pull', 'Pull-up (1/0)', 'num', 1), ('invert', 'Invert (1/0)', 'num', 0), ('unit', 'Label', 'text', '')]),
-    'flow': ('Flow meter, pulses (YF-S201...)', 'io', [('ppl', 'Pulses per litre', 'num', 450)]),
-    'aht': ('AHT10 / AHT20 temperature + humidity (I2C)', 'i2c', [('addr', 'Address hex', 'text', '38')]),
-    'sht3x': ('SHT30 / SHT31 temperature + humidity (I2C)', 'i2c', [('addr', 'Address hex', 'text', '44')]),
-    'bme280': ('BME280 / BMP280 temp, humidity, pressure (I2C)', 'i2c', [('addr', 'Address hex', 'text', '76')]),
-    'bh1750': ('BH1750 light, lux (I2C)', 'i2c', [('addr', 'Address hex', 'text', '23')]),
-    'ads1115': ('ADS1115 4-channel ADC, mV (I2C)', 'i2c', [('addr', 'Address hex', 'text', '48')]),
-    'ina219': ('INA219 voltage / current (I2C)', 'i2c', [('addr', 'Address hex', 'text', '41'), ('shunt', 'Shunt, ohm', 'num', 0.1)]),
+                [('pull', 'Pull-up (1/0)', 'num', 1), ('invert', 'Invert (1/0)', 'num', 0), ('unit', 'Label', 'text', '')],
+                None, None),
+    'flow': ('Flow meter, pulses (YF-S201...)', 'io', [('ppl', 'Pulses per litre', 'num', 450)], None, None),
+    'mhz19': ('MH-Z19 CO2, NDIR (UART)', 'uart', [], None, None),
+    'pms': ('PM2.5 laser dust sensor: PMS5003/7003, SDS011 (UART)', 'uart', [], None, None),
+    'aht': ('AHT10 / AHT20 temperature + humidity (I2C)', 'i2c', _I2C('38'), None, None),
+    'sht3x': ('SHT30 / SHT31 temperature + humidity (I2C)', 'i2c', _I2C('44'), None, None),
+    'bme280': ('BME280 / BMP280 temp, humidity, pressure (I2C)', 'i2c', _I2C('76'), None, None),
+    'bh1750': ('BH1750 light, lux (I2C)', 'i2c', _I2C('23'), None, None),
+    'ccs811': ('CCS811 eCO2 / TVOC air quality (I2C)', 'i2c', _I2C('5a'), None, None),
+    'vl53l0x': ('VL53L0X distance, GY-530 / GY-VL53L0XV2 (I2C)', 'i2c', _I2C('29'), None, None),
+    'vl53l1x': ('VL53L1X distance up to 4 m (I2C)', 'i2c', _I2C('29'), None, None),
+    'mpu6050': ('MPU-6050 tilt / motion, GY-521 (I2C)', 'i2c', _I2C('68'), None, None),
+    'tcs34725': ('TCS34725 RGB colour sensor (I2C)', 'i2c', _I2C('29'), None, None),
+    'ads1115': ('ADS1115 4-channel ADC, mV (I2C)', 'i2c', _I2C('48'), None, None),
+    'ina219': ('INA219 voltage / current (I2C)', 'i2c', _I2C('41') + [('shunt', 'Shunt, ohm', 'num', 0.1)], None, None),
 }
 
 
@@ -113,8 +140,10 @@ def taken_pins(lst, skip_id=None):
     except (OSError, ValueError, KeyError):
         pass
     for e in lst:
-        if e['id'] != skip_id and 'pin' in e:
-            t[e['pin']] = e['name']
+        if e['id'] != skip_id:
+            for k in ('pin', 'pin2'):
+                if k in e:
+                    t[e[k]] = e['name']
     return t
 
 
@@ -122,7 +151,7 @@ def free_pins(kind, lst, skip_id=None):
     if kind == 'i2c':
         return []
     t = taken_pins(lst, skip_id)
-    return [p for p in (ADC_PINS if kind == 'adc' else IO_PINS) if p not in t]
+    return [p for p in (ADC_PINS if kind == 'adc' else IO_PINS) if p not in t]      # 'io' and 'uart'
 
 
 def i2c_taken(lst, air, skip_id=None):

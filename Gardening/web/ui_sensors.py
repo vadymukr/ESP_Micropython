@@ -18,6 +18,17 @@ HINTS = {
     'i2c': 'Shared I2C bus with the air sensor: 3.3 V, SDA GPIO%d, SCL GPIO%d. The address is printed on the module or set with '
            'its jumpers and must not clash with another device.' % (S.I2C_SDA, S.I2C_SCL),
     'ina219': ' INA219 boards default to 0x40, the same as the Si7020 air sensor: bridge A0 for 0x41.',
+    'mq': 'Module on 5 V (heater ~150 mA, not from the 3.3 V pin). AO swings to 5 V: divider R1 100k / R2 82k to the pin '
+          '(ratio 2.22). RL = the module load resistor (SMD 102 = 1, 103 = 10 k&Omega;). Burn in 24 h, then press '
+          '<i>R0 = now</i> in clean outdoor air. Values start 3 min after power-on and are approximate - '
+          '<b>not a certified gas / CO alarm</b>.',
+    'acs758': 'Sensor on 5 V, output 0.5-4.5 V: divider R1 100k / R2 82k (ratio 2.22). 050B = &plusmn;50 A, 40 mV/A. '
+              'With no current flowing press <i>Zero = now</i>.',
+    'uv': 'Module on 3.3 V, output (&lt; 1.1 V) straight to an ADC1 pin. UV index &asymp; output / 0.1 V.',
+    'uart': 'Sensor TX &rarr; RX pin, sensor RX &rarr; TX pin, 5 V supply, common GND (3.3 V logic is fine). '
+            'At most 2 UART sensors.',
+    'ccs811': ' Tie nWAKE to GND. eCO2 is estimated from VOCs; 48 h burn-in, 20 min warm-up.',
+    'x29': ' VL53L0X, VL53L1X and TCS34725 all use 0x29: only one of them on the bus.',
 }
 
 
@@ -41,7 +52,7 @@ def _live(e):
 def form(R, typ, cur=None):
     """Add / edit form for one type (list of HTML parts)."""
     lst = app.sens.reg
-    label, kind, fields = R.TYPES[typ]
+    kind, fields = R.TYPES[typ][1], R.TYPES[typ][2]
     out = ['<form class="set" hx-post="/sensors/save" hx-target="#smsg">'
            '<input type="hidden" name="id" value="%s"><b style="flex-basis:100%%">%s</b>'
            % (cur['id'] if cur else '', 'Edit %s' % esc(cur['name']) if cur else 'Add a sensor')]
@@ -56,10 +67,14 @@ def form(R, typ, cur=None):
                % esc(cur['name'] if cur else ''))
     if kind != 'i2c':
         pins = R.free_pins(kind, lst, cur['id'] if cur else None)
-        out.append('<label>Pin (%s)<select name="pin">' % ('ADC1' if kind == 'adc' else 'GPIO'))
-        for p in pins:
-            out.append('<option value="%d"%s>GPIO%d</option>' % (p, ' selected' if cur and cur.get('pin') == p else '', p))
-        out.append('%s</select></label>' % ('' if pins else '<option value="">no free pin</option>'))
+        sel = (('pin', 'RX pin (from sensor TX)'), ('pin2', 'TX pin (to sensor RX)')) if kind == 'uart' else \
+            (('pin', 'Pin (%s)' % ('ADC1' if kind == 'adc' else 'GPIO')),)
+        for n, (key, lbl) in enumerate(sel):
+            out.append('<label>%s<select name="%s">' % (lbl, key))
+            for k, p in enumerate(pins):
+                s_ = cur.get(key) == p if cur else k == n  # new UART sensor: RX/TX preselect different pins
+                out.append('<option value="%d"%s>GPIO%d</option>' % (p, ' selected' if s_ else '', p))
+            out.append('%s</select></label>' % ('' if pins else '<option value="">no free pin</option>'))
     for key, lbl, t, dflt in fields:
         v = cur.get(key, dflt) if cur else dflt
         out.append('<label>%s<input name="%s" %s value="%s" style="width:7em"></label>'
@@ -68,8 +83,10 @@ def form(R, typ, cur=None):
     if cur:
         out.append(' <button class="small" type="button" hx-get="/sensors" hx-target="#sensors">Cancel</button>')
     out.append('<p class="muted" style="flex-basis:100%%;margin:0">%s%s</p></form>'
-               % (HINTS.get(typ) or HINTS['i2c' if kind == 'i2c' else 'analog'],
-                  HINTS['ina219'] if typ == 'ina219' else ''))
+               % (HINTS[typ] if typ in HINTS and typ not in ('ina219', 'ccs811') else
+                  HINTS['mq' if typ[:2] == 'mq' else kind if kind in ('i2c', 'uart') else 'analog'],
+                  HINTS[typ] if typ in ('ina219', 'ccs811') else
+                  HINTS['x29'] if typ in ('vl53l0x', 'vl53l1x', 'tcs34725') else ''))
     return out
 
 
@@ -84,9 +101,14 @@ def frag(R, msg=''):
         out.append('<tr><td>%s <small>%s</small></td><td>%s%s</td><td>%s</td><td>%s</td><td>'
                    % (esc(e['name']), sid, esc(R.TYPES.get(e['type'], (e['type'],))[0]),
                       ' <small>dry %d / wet %d</small>' % (e['dry'], e['wet']) if e['type'] == 'soil' else '',
-                      'GPIO%d' % e['pin'] if 'pin' in e else 'I2C 0x%s' % e['addr'].upper() if 'addr' in e else '-',
+                      ('GPIO%d' % e['pin'] + (' / %d' % e['pin2'] if 'pin2' in e else '')) if 'pin' in e
+                      else 'I2C 0x%s' % e['addr'].upper() if 'addr' in e else '-',
                       _live(e)))
         out.append('<button class="small" hx-post="/sensors/edit" hx-vals=\'{"id":"%s"}\' hx-target="#sform">Edit</button> ' % sid)
+        cal = R.TYPES.get(e['type'], (0, 0, 0, 0, None))[4]
+        if cal:                                 # driver calibration, e.g. MQ R0 in clean air
+            out.append('<button class="small" hx-post="/sensors/cal" hx-vals=\'{"id":"%s"}\' hx-target="#smsg">%s</button> '
+                       % (sid, cal))
         if e['type'] == 'soil':
             for w in ('dry', 'wet'):
                 out.append('<button class="small" hx-post="/sensors/cap" hx-vals=\'{"id":"%s","w":"%s"}\' hx-target="#smsg" '
