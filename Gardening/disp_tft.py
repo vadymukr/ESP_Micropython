@@ -3,6 +3,7 @@
 # ESP32-2432S028 "Cheap Yellow Display"). No frame buffer (240x240 would need 115 KB):
 # everything is drawn straight to the screen in small strips (<= 2 KB), text with an opaque
 # background, so values update without flicker.
+# Spec: docs/SPEC.md#displays
 import time
 import framebuf
 from machine import Pin, SPI, PWM
@@ -22,10 +23,12 @@ COLORS = {'bg': 0x0000, 'fg': 0xFFFF, 'muted': 0x8410, 'good': 0x2E8A, 'soon': 0
 
 
 def _sw(c):                       # framebuf keeps RGB565 little-endian, the panel wants big-endian
+    """Swap the bytes of an RGB565 colour (frame buffer order vs panel order)."""
     return ((c & 0xFF) << 8) | (c >> 8)
 
 
 class Tft:
+    """ST7789 / ST7735 / ILI9341 colour TFT driver without a frame buffer (common display driver interface)."""
     color = True
 
     def __init__(self, e, spi_id):
@@ -72,6 +75,7 @@ class Tft:
         self.contrast(e.get('bright', 80))
 
     def cmd(self, c, data=None):
+        """Send a command byte and optional data."""
         if self.cs:
             self.cs.value(0)
         self.dc.value(0)
@@ -83,6 +87,7 @@ class Tft:
             self.cs.value(1)
 
     def _win(self, x, y, w, h):
+        """Set the drawing window (with the panel offset) and start writing pixels."""
         x += self.xo
         y += self.yo
         self.cmd(0x2A, bytes((x >> 8, x & 0xFF, (x + w - 1) >> 8, (x + w - 1) & 0xFF)))
@@ -94,13 +99,16 @@ class Tft:
         self.dc.value(1)
 
     def _end(self):
+        """End a pixel write (CS high)."""
         if self.cs:
             self.cs.value(1)
 
     def col(self, name):
+        """RGB565 colour for a name (band keys, fg, bg, muted)."""
         return COLORS.get(name, 0xFFFF)
 
     def fill_rect(self, x, y, w, h, c):
+        """Filled rectangle, clipped to the screen, sent in 1 KB chunks."""
         x, y = max(0, x), max(0, y)
         w, h = min(w, self.w - x), min(h, self.h - y)
         if w <= 0 or h <= 0:
@@ -115,6 +123,7 @@ class Tft:
         self._end()
 
     def fill(self, c):
+        """Fill the whole screen."""
         self.fill_rect(0, 0, self.w, self.h, c)
 
     def draw(self, s, x, y, font=None, fg=0xFFFF, bg=0):
@@ -164,14 +173,17 @@ class Tft:
         self._end()
 
     def show(self):
+        """Nothing to do (drawing goes straight to the panel)."""
         pass
 
     def power(self, on):
+        """Display and backlight on / off."""
         self.cmd(0x29 if on else 0x28)
         if self.bl:
             self.bl.duty(self._duty if on else 0)
 
     def contrast(self, pct):
+        """Backlight brightness 5-100 % (PWM on BL)."""
         self._duty = max(5, min(100, pct)) * 1023 // 100
         if self.bl:
             self.bl.duty(self._duty)

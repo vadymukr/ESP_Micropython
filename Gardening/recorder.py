@@ -1,5 +1,6 @@
 # CSV recorder (feature 'recorder'): records the sensor averages to DATA_DIR/*.csv; started and
 # stopped from the dashboard. Not loaded when the feature is off (settings.FEATURES / Features panel).
+# Spec: docs/SPEC.md#recording
 try:
     import asyncio
 except ImportError:
@@ -14,7 +15,9 @@ REC_STATE = S.DATA_DIR + '/rec.json'
 
 
 class Recorder:
+    """CSV recording of averaged readings to flash, resumable after a restart."""
     def __init__(self, sens):
+        """State from rec.json (a recording that was running continues)."""
         self.sens = sens
         self.active = self.resume = False
         self.fname = ''
@@ -36,14 +39,17 @@ class Recorder:
             pass
 
     def path(self, name=None):
+        """Full path of a recording file (default: the current one)."""
         return S.DATA_DIR + '/' + (name or self.fname)
 
     def _save(self):
+        """Write the recording state (rec.json)."""
         with open(REC_STATE, 'w') as f:
             json.dump({'active': self.active or self.resume, 'fname': self.fname,
                        'interval': self.interval, 'end': self.end, 'started': self.started}, f)
 
     def _header(self):
+        """CSV header: time, air, every soil sensor, every registry channel."""
         cols = ['timestamp', 'elapsed_s', 'air_temp_c', 'air_rh_pct', 'air_hpa']
         for c in self.sens.ch:
             cols.append('gpio%d_raw' % c[0])
@@ -54,6 +60,7 @@ class Recorder:
         return ','.join(cols) + '\n'
 
     def start(self, interval, hours, label):
+        """Start a recording (interval s, hours 0 = until stopped); returns a message."""
         if self.active or self.resume:
             return 'Already recording.'
         if not time_ok():
@@ -79,12 +86,14 @@ class Recorder:
         return ''
 
     def stop(self, why='Stopped'):
+        """Stop recording and note why in the status line."""
         self.active = self.resume = False
         self.msg = '%s at %s.' % (why, stamp())
         self._save()
         print('rec:', self.msg)
 
     def _row(self, now):
+        """Append one row of the averages since the last row, then clear the sums."""
         s = self.sens
         if not s.acc_n:
             return
@@ -105,6 +114,7 @@ class Recorder:
         s.acc_reset()
 
     def _count_rows(self):
+        """Rows already in the file (resuming after a restart)."""
         n, buf = 0, bytearray(512)
         try:
             with open(self.path(), 'rb') as f:
@@ -118,6 +128,7 @@ class Recorder:
         return max(0, n - 1)
 
     async def run(self):
+        """Task: a row every interval; stops at the end time, on low flash or a full file."""
         while True:
             await asyncio.sleep(1)
             try:

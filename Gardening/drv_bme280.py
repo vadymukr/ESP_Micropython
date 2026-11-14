@@ -1,10 +1,15 @@
 # Bosch BME280 (temperature, humidity, pressure) or BMP280 (no humidity), I2C 0x76 / 0x77.
 # Normal mode (sensor measures continuously, 1 s standby), so a read is just a register read.
+# Spec: docs/SPEC.md#driver-interface
 import struct
 
 
 class Driver:
+    """Registry driver: Bosch BME280 (temperature, humidity, pressure) or BMP280 (no humidity), I2C 0x76.
+    Interface: docs/SPEC.md#driver-interface."""
     def __init__(self, e, ctx):
+        """Set up from the registry entry e (pins / address / settings); ctx = app.sens (shared I2C bus, free
+        UARTs, air readings)."""
         self.e, self.ctx = e, ctx
         self.a = int(e.get('addr', '76'), 16)
         i2c = ctx.i2c
@@ -26,6 +31,7 @@ class Driver:
         i2c.writeto_mem(self.a, 0xF4, b'\x57')             # temp x2, pressure x16, normal mode
 
     def chans(self):
+        """Channels this sensor reports: [(key, label, unit, decimals)]."""
         n = self.e['name']
         ch = [('t', n + ' temp', '&deg;C', 1)]
         if self.hum:
@@ -34,6 +40,7 @@ class Driver:
         return ch
 
     def read(self):
+        """One value per channel, None where there is no valid reading this time."""
         d = self.ctx.i2c.readfrom_mem(self.a, 0xF7, 8)
         adc_p = (d[0] << 12) | (d[1] << 4) | (d[2] >> 4)
         adc_t = (d[3] << 12) | (d[4] << 4) | (d[5] >> 4)
@@ -60,4 +67,5 @@ class Driver:
         return out
 
     def info(self):
+        """Short status text for the dashboard card (pin / address, raw value or error)."""
         return '%s &middot; I2C 0x%02X' % ('BME280' if self.hum else 'BMP280', self.a)

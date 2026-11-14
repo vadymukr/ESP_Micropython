@@ -1,11 +1,13 @@
 # Control panel edit / add form (/control/form) - loaded per request by app.py, then released.
 # Built from small parts with helpers (low peak RAM; no import of ui_control).
+# Spec: docs/SPEC.md#controllers
 import app
 from app import esc
 import settings as S
 
 
 def _pins(own):
+    """Free output pins (own = the pin the controller already has)."""
     import sys
     import sensors as R
     try:
@@ -20,17 +22,20 @@ def _pins(own):
 
 
 def _num(out, name, label, v, show='', w=5, attrs='step="any"'):
+    """Append a number field (show = Alpine condition)."""
     out.append('<label%s>%s<input name="%s" type="number" %s value="%s" style="width:%dem"></label>'
                % (' x-show="%s"' % show if show else '', label, name, attrs, ('%g' % v) if isinstance(v, float) else v, w))
 
 
 def _chk(out, name, label, on, show=''):
+    """Append a checkbox."""
     out.append('<label class="row" style="flex-direction:row;align-items:center;gap:6px"%s><input type="checkbox" '
                'name="%s" value="1"%s> %s</label>' % (' x-show="%s"' % show if show else '', name,
                                                        ' checked' if on else '', label))
 
 
 def _sel(out, name, label, opts, cur, show='', model=''):
+    """Append a select of (value, label) options."""
     out.append('<label%s>%s<select name="%s"%s>' % (' x-show="%s"' % show if show else '', label, name,
                                                      ' x-model="%s"' % model if model else ''))
     for k, lbl in opts:
@@ -39,11 +44,13 @@ def _sel(out, name, label, opts, cur, show='', model=''):
 
 
 def _txt(out, name, label, v, show='', w=5, ph=''):
+    """Append a short text field."""
     out.append('<label%s>%s<input name="%s" maxlength="11" value="%s" placeholder="%s" style="width:%dem"></label>'
                % (' x-show="%s"' % show if show else '', label, name, esc(v), ph, w))
 
 
 def form(e, new):
+    """The add / edit form of controller entry e (new = adding)."""
     from control_cfg import sources
     out = ['<form class="set" hx-post="/control/save" hx-target="#control" x-data="{m:\'%s\',o:\'%s\'}">'
            '<input type="hidden" name="id" value="%s"><input type="hidden" name="kind" value="%s">'
@@ -110,6 +117,7 @@ def form(e, new):
 
 
 def handle(method, path, f):
+    """GET /control/form?id=<id> (edit) or ?kind=<kind> (add)."""
     from control_cfg import load_cfg, defaults, KINDS, MAX
     c = load_cfg()
     if f.get('id'):

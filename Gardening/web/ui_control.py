@@ -1,5 +1,6 @@
 # Control panel (/control, /control/save, /control/del; the form: ui_control_form.py) - loaded per request,
 # then released. Heaters, lights (PWM dimmers) and fans with PID, on/off or manual control.
+# Spec: docs/SPEC.md#controllers
 import app
 from app import esc
 import settings as S
@@ -14,10 +15,12 @@ INTS = ('min_s', 'man', 'freq', 'window_s', 'max_pct', 'min_pct', 'ramp_min', 'd
 
 
 def _hhmm(t):
+    """True for a valid 'HH:MM'."""
     return len(t) == 5 and t[2] == ':' and (t[:2] + t[3:]).isdigit() and int(t[:2]) < 24 and int(t[3:]) < 60
 
 
 def _pins(own=None):
+    """Free output pins (own = the pin the controller already has)."""
     import sys
     import sensors as R
     try:
@@ -32,6 +35,7 @@ def _pins(own=None):
 
 
 def frag(msg='', ok=False):
+    """Control panel: list of controllers with Edit / Remove, Add buttons, help."""
     from control_cfg import load_cfg, KINDS, MAX
     c = load_cfg()
     run = dict((k.c['id'], k) for k in app.ctrl.ctls) if app.ctrl else {}
@@ -68,6 +72,7 @@ def frag(msg='', ok=False):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     from control_cfg import load_cfg, save_cfg, defaults, sources, KINDS, MAX
     c = load_cfg()
     if path == '/control':

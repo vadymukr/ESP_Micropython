@@ -15,6 +15,7 @@
 #                          On low battery the interval becomes `lowbatt_every`.
 # Safety: any error in the quick (timer-wake) path starts the full app instead of sleeping, so the
 # board stays reachable. Holding BOOT during an EN reset still skips the app (REPL only).
+# Spec: docs/SPEC.md#power-saving
 try:
     import asyncio
 except ImportError:
@@ -37,6 +38,7 @@ for _k, _v in (('PIN_WAKE', 'button'), ('EXT0_WAKE', 'button'), ('TIMER_WAKE', '
 
 
 def local_min(t):
+    """Local minute of the day of epoch time t."""
     tm = time.localtime(t + S.TZ_OFFSET_H * 3600)
     return tm[3] * 60 + tm[4]
 
@@ -57,7 +59,9 @@ def parse_windows(s):
 
 
 class Power:
+    """Power saving: CPU clock, sensor supply switching, deep-sleep cycle with awake windows."""
     def __init__(self, uptime, time_ok):
+        """Settings from power.json; applies the CPU clock and notes the wake cause."""
         self.up, self.time_ok = uptime, time_ok
         self.cfg = dict(DEFAULTS)
         try:
@@ -80,6 +84,7 @@ class Power:
 
     # ---------------------------------------------------------------- config
     def save(self, **kw):
+        """Update and save power.json."""
         self.cfg.update(kw)
         tmp = CFG + '.tmp'
         with open(tmp, 'w') as f:
@@ -87,6 +92,7 @@ class Power:
         os.rename(tmp, CFG)
 
     def apply_cpu(self):
+        """Set the CPU frequency from the settings (if the chip supports it)."""
         mhz = self.cfg['cpu'] if self.cfg['cpu'] in CPUS else 160
         if machine.freq() != mhz * 1000000:
             try:
@@ -96,17 +102,21 @@ class Power:
 
     # ---------------------------------------------------------------- sensor power
     def sensor_switching(self):
+        """True if the soil sensors are powered from GPIOs only while measuring."""
         return bool(self.sp) and self.cfg['sensor_pwr']
 
     def sensors(self, on):
+        """Switch the sensor supply pins."""
         for p in self.sp:
             p.value(1 if on else 0)
 
     # ---------------------------------------------------------------- awake / sleep decisions
     def maint(self):
+        """Maintenance mode active (stay awake until maint_until)."""
         return self.time_ok() and self.cfg['maint_until'] > time.time()
 
     def in_window(self):
+        """Inside one of the daily awake windows."""
         if not self.time_ok():
             return False
         m = local_min(time.time())
@@ -140,17 +150,21 @@ class Power:
             self.deadline = min(max(self.deadline, self.up() + self.cfg['stay'] * 60), self.cap)
 
     def awake_left(self):
+        """Seconds until the board may sleep again."""
         return max(0, self.deadline - self.up())
 
     def want_sleep(self):
+        """Cycle mode, no window / maintenance, deadline passed: time to sleep."""
         return (self.cfg['mode'] == 'cycle' and not self.maint() and not self.in_window()
                 and self.up() >= self.deadline)
 
     # ---------------------------------------------------------------- time sync
     def need_ntp(self):
+        """Clock not set or the last NTP sync is older than NTP_EVERY_S."""
         return not self.time_ok() or time.time() - self.cfg['ntp_at'] > S.NTP_EVERY_S
 
     def mark_ntp(self):
+        """Remember the time of a successful NTP sync."""
         if self.time_ok():
             self.cfg['ntp_at'] = time.time()
             self.save()
@@ -184,12 +198,14 @@ class Power:
 
     # ---------------------------------------------------------------- deep sleep
     def sleep_secs(self, low_batt=False, quick=False):
+        """Seconds to sleep (low-battery interval if low_batt; steady cadence after a quick wake)."""
         every = (self.cfg['lowbatt_every'] if low_batt else self.cfg['every']) * 60
         s = max(30, every - self.up()) if quick else every       # quick wake: keep a steady cadence
         w = self.secs_to_window()
         return min(s, w) if w is not None and w > 0 else s
 
     def deepsleep(self, secs):
+        """Outputs off, wake sources set (timer, button, touch), deep sleep for secs."""
         import esp32
         self.sensors(False)
         if S.WAKE_BUTTON is not None:
@@ -222,6 +238,7 @@ class Power:
                 self.deepsleep(self.sleep_secs(low_batt()))
 
     def status(self):
+        """Status parts for the System facts (MHz, mode, next sleep / window)."""
         c = self.cfg
         parts = ['%d MHz' % (machine.freq() // 1000000)]
         if self.sensor_switching():
@@ -247,10 +264,12 @@ class Power:
 
 
 def _hm(t):
+    """Epoch time as local HH:MM."""
     tm = time.localtime(t + S.TZ_OFFSET_H * 3600)
     return '%02d:%02d' % (tm[3], tm[4])
 
 
 def _dur(s):
+    """Human duration."""
     s = int(s)
     return '%d s' % s if s < 120 else '%d min' % (s // 60) if s < 7200 else '%d h %02d min' % (s // 3600, s % 3600 // 60)

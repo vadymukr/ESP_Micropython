@@ -19,6 +19,7 @@
 #
 # Calibration: measure the real voltage with a multimeter and enter it in the panel; the factor
 # (resistor tolerance, ADC error) is saved as 'cal'.
+# Spec: docs/SPEC.md#battery-monitor
 import json
 import os
 from machine import ADC, Pin
@@ -43,6 +44,7 @@ def defaults():
 
 
 def load_cfg():
+    """Battery monitor settings (batt.json over the settings.py template)."""
     c = defaults()
     try:
         with open(CFG) as f:
@@ -56,6 +58,7 @@ def load_cfg():
 
 
 def save_cfg(c):
+    """Write batt.json atomically."""
     tmp = CFG + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(c, f)
@@ -74,7 +77,9 @@ def suggest(vmax, r1=100):
 
 
 class Battery:
+    """Supply voltage through a resistor divider on an ADC1 pin, with low / critical states."""
     def __init__(self, c):
+        """ADC on the configured pin; divider ratio and thresholds from the settings c."""
         self.cfg = c
         self.pin = c['pin']
         self.adc = ADC(Pin(self.pin))
@@ -86,6 +91,7 @@ class Battery:
         self.state = 'ok'
 
     def read(self):
+        """Measure (averaged): sets v, pin_v and state 'ok' | 'low' | 'crit' (with hysteresis)."""
         s = 0
         for _ in range(16):
             s += self.adc.read_uv()          # factory-calibrated microvolts

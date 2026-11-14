@@ -1,6 +1,7 @@
 # Settings panels (bands, LEDs, power) - imported only for /bands, /leds, /power requests and
 # released afterwards (app.py removes it from sys.modules), so this code does not sit in RAM.
 # Pump and MQTT panels are in ui_pump.py / ui_mqtt.py, loaded the same way (smaller peak heap).
+# Spec: docs/SPEC.md#watering-bands
 import time
 import app
 from app import esc, time_ok
@@ -8,6 +9,7 @@ import settings as S
 
 
 def frag_bands(msg=''):
+    """Watering bands panel: growth stage and F per sensor."""
     from bands import STAGES
     b = app.bands
     # Independent F per sensor by default. "Link" keeps sensor B..N at a fixed offset from A, so one
@@ -47,6 +49,7 @@ MODES = ('off', 'on', 'eco')             # same as leds.MODES (leds.py is not lo
 
 
 def frag_leds(msg=''):
+    """4-LED indicator mode."""
     if not S.LED_PINS:
         return '<p class="muted">No indicator LEDs configured (LED_PINS in settings.py).</p>'
     mode = app.leds.mode if app.leds else app.leds_mode()
@@ -64,6 +67,7 @@ def frag_leds(msg=''):
 
 
 def frag_power(msg=''):
+    """Power saving panel: CPU clock, sleep cycle, windows, sensor power."""
     if not app.pwr:
         return '<p class="muted">Power management off (POWER_ENABLED in settings.py).</p>'
     from power import CPUS
@@ -104,6 +108,7 @@ def frag_power(msg=''):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     bands = app.bands
     if method == 'GET':
         return {'/bands': frag_bands, '/leds': frag_leds, '/power': frag_power}.get(path, lambda: None)()

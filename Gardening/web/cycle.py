@@ -1,5 +1,6 @@
 # Sleep-cycle quick wake (power.py): imported by main.py only after a deep-sleep wake, so this
 # code is never in RAM while the web app runs.
+# Spec: docs/SPEC.md#power-saving
 import time
 try:
     import asyncio

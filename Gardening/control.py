@@ -24,81 +24,24 @@
 # Hours: 'HH:MM-HH:MM' = only active then (e.g. a grow light), '' = always.
 # Safety (pid / onoff): no reading for 30 s -> output 0; reading past 'cut' (heater / light: at or above,
 # fan: at or below) -> output 0 until it is back by 'cut_back'.
+# Spec: docs/SPEC.md#controllers
 try:
     import asyncio
 except ImportError:
     import uasyncio as asyncio
 import time
 from machine import Pin, PWM
-import settings as S
 
-from control_cfg import CFG, KINDS, UP, MAX, defaults, load_cfg, save_cfg, sources   # noqa: F401
-
-
-def _hm(s):
-    return int(s[:2]) * 60 + int(s[3:5])
+from control_cfg import UP, sources
 
 
-def _now_min():
-    t = time.localtime(time.time() + S.TZ_OFFSET_H * 3600)
-    return t[3] * 60 + t[4] + t[5] / 60
-
-
-def sun_level(c, m):
-    """Output % of the daylight cycle at minute-of-day m, and the phase name."""
-    import math
-    rise, L = _hm(c['rise']), (_hm(c['set']) - _hm(c['rise'])) % 1440 or 1440
-    d = (m - rise) % 1440                                  # minutes since sunrise
-    if d >= L:
-        return float(c['night']), 'night'
-    if c['shape'] == 'arc':
-        f, ph = math.sin(math.pi * d / L), 'day'
-    else:
-        r = max(1, min(c['ramp_min'], L / 2))
-        if d < r:
-            f, ph = d / r, 'sunrise'
-        elif d > L - r:
-            f, ph = (L - d) / r, 'sunset'
-        else:
-            f, ph = 1.0, 'day'
-        if c['shape'] == 'smooth':
-            f = (1 - math.cos(math.pi * f)) / 2           # S-curve: slow start, slow finish
-    return c['night'] + (c['day'] - c['night']) * f, ph
-
-
-def curve_level(c, v, prev):
-    """Output % on the line (x1, y1)-(x2, y2); with 'stop', off past x1 (restarts at x1 - hysteresis)."""
-    x1, x2 = c['x1'], c['x2']
-    if x1 == x2:
-        return float(c['y2'])
-    f = (v - x1) / (x2 - x1)
-    if c['stop']:
-        beyond = f * abs(x2 - x1)                         # >0 towards x2, <0 past x1, in sensor units
-        if beyond < -max(0.0, c['hyst']) or (prev == 0 and beyond < 0):
-            return 0.0
-    f = max(0.0, min(1.0, f))
-    return c['y1'] + (c['y2'] - c['y1']) * f
-
-
-def _in_hours(spec):
-    try:
-        a, b = spec.split('-')
-        a = int(a[:2]) * 60 + int(a[3:5])
-        b = int(b[:2]) * 60 + int(b[3:5])
-    except (ValueError, IndexError):
-        return True
-    from app import time_ok
-    if not time_ok():
-        return True                        # clock not set yet: do not keep things off
-    t = time.localtime(time.time() + S.TZ_OFFSET_H * 3600)
-    m = t[3] * 60 + t[4]
-    return a <= m < b if a <= b else m >= a or m < b
-
+from control_calc import sun_level, curve_level, _in_hours, _now_min
 
 class Ctl:
     """One controller."""
 
     def __init__(self, c):
+        """Controller from entry c; output pin set up and driven off (PWM unless on/off mode)."""
         self.c = c
         self.pin = self.pwm = None
         self.v = None                  # reading now
@@ -118,6 +61,7 @@ class Ctl:
                 self._duty(0)
 
     def release(self):
+        """Output off and pin released (reconfigure, sleep, restart)."""
         if self.pwm:
             self._duty(0)
             self.pwm.deinit()
@@ -128,9 +72,11 @@ class Ctl:
         self.outp = 0.0
 
     def active(self):
+        """Pin set up and not in off mode (keeps a sleep-cycle board awake)."""
         return self.pin is not None and self.c['mode'] != 'off'
 
     def _duty(self, pct):
+        """Apply pct % as PWM duty: minimum level, gamma curve, 16-bit steps where available."""
         c = self.c
         if pct > 0:
             pct = max(pct, c['min_pct'])
@@ -145,9 +91,11 @@ class Ctl:
             self.pwm.duty(1023 - d if c['inv'] else d)
 
     def _set(self, on):
+        """Switch the output pin on / off (respecting active-low)."""
         self.pin.value((0 if on else 1) if self.c['inv'] else (1 if on else 0))
 
     def read(self):
+        """Current value of the followed sensor ('air', 'air.rh' or '<id>.<channel>'), or None."""
         import app
         s, src = app.sens, self.c['src']
         if src == 'air':
@@ -268,66 +216,39 @@ class Ctl:
 
     # ---------------------------------------------------------------- display
     def card(self):
-        c = self.c
-        word = {'heater': 'Heating', 'light': 'On', 'fan': 'Cooling'}[c['kind']]
-        band = ('dry' if self.fault else 'now' if self.state == 'on' and c['kind'] == 'heater' else
-                'good' if self.state in ('on', 'holding', 'idle', 'manual') else 'wet')
-        badge = {'on': word, 'holding': 'Holding', 'idle': 'Past setpoint', 'manual': 'Manual %d %%' % round(self.outp),
-                 'off': 'Off', 'cut-off': 'CUT-OFF', 'no reading': 'No reading', 'stopped': 'Stopped',
-                 'outside hours': 'Off (hours)', 'sunrise': 'Sunrise', 'sunset': 'Sunset', 'day': 'Day',
-                 'night': 'Night', 'clock not set': 'Clock not set'}.get(self.state, self.state)
-        lbl, unit = self.src()
-        unit = unit.replace('\xb0', '&deg;')
-        how = ('switched' if c['mode'] == 'onoff' else 'PWM %d Hz' % c['freq'] if c['out'] == 'pwm'
-               else 'window %d s' % c['window_s'])
-        if c['mode'] == 'sun':
-            setp = 'sun %s-%s &middot; %s %d min &middot; day %d %% night %d %%' % (
-                c['rise'], c['set'], c['shape'], c['ramp_min'], c['day'], c['night'])
-        elif c['mode'] == 'curve':
-            setp = 'curve %g%s &rarr; %d %%, %g%s &rarr; %d %%%s' % (c['x1'], unit, c['y1'], c['x2'], unit, c['y2'],
-                                                              ' &middot; stops' if c['stop'] else '')
-        else:
-            setp = ('manual' if c['mode'] == 'manual' else '%g %s &middot; %s' % (
-                c['sp'], unit, 'PID' if c['mode'] == 'pid' else 'on/off &plusmn;%g' % (c['hyst'] / 2)))
-        if c['mode'] in ('manual', 'sun') or not c['src']:  # dimmer / daylight: the level is the big number
-            big = '%d<small>%%</small>' % round(self.cur if self.pwm else self.outp)
-        else:
-            big = '%s<small>%s</small>' % ('&ndash;' if self.v is None else '%.1f' % self.v, unit)
-        return ('<div class="card band %s"><h3><span>%s <small>GPIO%s</small></span><span class="badge">%s</span></h3>'
-                '<div class="big">%s</div><div class="bar"><i style="width:%d%%"></i></div>'
-                '<dl class="facts"><dt>Setpoint</dt><dd>%s</dd><dt>Output</dt><dd>%d %% &middot; %s</dd>'
-                '<dt>Sensor</dt><dd>%s</dd></dl>%s</div>'
-                % (band, _esc(c['name']), c['pin'], badge, big, round(self.outp), setp, round(self.outp), how,
-                   _esc(lbl), '<p class="warn">%s</p>' % _esc(self.fault) if self.fault else ''))
+        """Dashboard card (control_view.py)."""
+        from control_view import card
+        return card(self)
 
     def mqtt(self):
+        """Values for the MQTT state message."""
         c = self.c
         return {'name': c['name'], 'kind': c['kind'], 'value': None if self.v is None else round(self.v, 2),
                 'setpoint': c['sp'], 'out_pct': round(self.outp, 1), 'mode': c['mode'], 'state': self.state,
                 'fault': self.fault or None, 'p': round(self.p, 1), 'i': round(self.i, 1), 'd': round(self.d, 1)}
 
 
-def _esc(t):
-    return str(t).replace('&', '&amp;').replace('<', '&lt;')
-
-
 class Controls:
     """All controllers, one task."""
 
     def __init__(self, cfg):
+        """All enabled controllers of cfg."""
         self.ctls = []
         self.reconfig(cfg)
 
     def reconfig(self, cfg):
+        """Release every output and rebuild from cfg (only enabled controllers run)."""
         for k in self.ctls:
             k.release()
         self.ctls = [Ctl(e) for e in cfg['list'] if e['on']]
 
     def off(self):
+        """All outputs off."""
         for k in self.ctls:
             k.release()
 
     def active(self):
+        """True if any controller is active."""
         return any(k.active() for k in self.ctls)
 
     def get(self, key):
@@ -342,12 +263,15 @@ class Controls:
         return None
 
     def card(self):
+        """Dashboard cards of all controllers."""
         return ''.join(k.card() for k in self.ctls)
 
     def mqtt(self):
+        """MQTT values keyed by controller id."""
         return dict((k.c['id'], k.mqtt()) for k in self.ctls)
 
     async def run(self):
+        """Task: output stage every 0.2 s, control step every 2 s; ends when none is left."""
         n = 0
         while self.ctls:                                   # all removed: task ends (module unloaded)
             ms = time.ticks_ms()

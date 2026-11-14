@@ -226,29 +226,13 @@ echo "== board MicroPython $VER -> $("$MPYCROSS" --version)"
 [[ -f wifi.json ]] || echo "   note: no wifi.json - the board will start the 'garden' setup hotspot"
 
 rm -rf "$BUILD"; mkdir -p "$BUILD/www"
-# Python -> .mpy (precompiled bytecode: no on-device compile, much less heap at boot)
-"$MPYCROSS" -O1 -o "$BUILD/app.mpy" app.py
-"$MPYCROSS" -O1 -o "$BUILD/aht10.mpy" ../aht10.py
-"$MPYCROSS" -O1 -o "$BUILD/climate.mpy" ../climate.py
-"$MPYCROSS" -O1 -o "$BUILD/bands.mpy" ../bands.py
-"$MPYCROSS" -O1 -o "$BUILD/leds.mpy" ../leds.py
-"$MPYCROSS" -O1 -o "$BUILD/battery.mpy" ../battery.py
-"$MPYCROSS" -O1 -o "$BUILD/power.mpy" ../power.py
-"$MPYCROSS" -O1 -o "$BUILD/ui_cfg.mpy" ui_cfg.py
-"$MPYCROSS" -O1 -o "$BUILD/cycle.mpy" cycle.py
-"$MPYCROSS" -O1 -o "$BUILD/pump.mpy" ../pump.py      # pump + mqtt: not frozen in the garden firmware, always uploaded
-"$MPYCROSS" -O1 -o "$BUILD/mqtt.mpy" ../mqtt.py
-"$MPYCROSS" -O1 -o "$BUILD/ui_pump.mpy" ui_pump.py
-"$MPYCROSS" -O1 -o "$BUILD/ui_mqtt.mpy" ui_mqtt.py
-for m in ui_wifi ui_files captive ui_batt ui_sensors ui_sensors_set ui_rgb ui_gsm ui_feat ui_display ui_control ui_control_form; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" $m.py; done
-"$MPYCROSS" -O1 -o "$BUILD/sensors.mpy" ../sensors.py
-"$MPYCROSS" -O1 -o "$BUILD/sensor_types.mpy" ../sensor_types.py
-"$MPYCROSS" -O1 -o "$BUILD/gsm.mpy" ../gsm.py
-"$MPYCROSS" -O1 -o "$BUILD/gsm_cfg.mpy" ../gsm_cfg.py
-"$MPYCROSS" -O1 -o "$BUILD/recorder.mpy" ../recorder.py
-for m in display disp_oled disp_tft gfont control control_cfg; do "$MPYCROSS" -O1 -o "$BUILD/$m.mpy" ../$m.py; done
-"$MPYCROSS" -O1 -o "$BUILD/rgb.mpy" ../rgb.py           # sensor registry + one file per driver type
-for f in ../drv_*.py; do "$MPYCROSS" -O1 -o "$BUILD/$(basename "${f%.py}").mpy" "$f"; done
+# Python -> .mpy (precompiled bytecode: no on-device compile, much less heap at boot): every module
+# next to the app (../*.py, drivers included) and in web/ - except main.py / settings.py (plain .py,
+# editable on the board) and the PC-only test script. legacy/ and tools/ are not uploaded.
+for f in ../*.py *.py; do
+  case "$(basename "$f")" in main.py|settings.py|wifi_test.py) continue ;; esac
+  "$MPYCROSS" -O1 -o "$BUILD/$(basename "${f%.py}").mpy" "$f" || die "mpy-cross failed on $f"
+done
 cp main.py settings.py sensor_types.txt "$BUILD/"
 # wiring profile: --board, else the one in the settings.py already on the board, else the template's
 if [[ -z "$BOARD_SET" ]]; then
@@ -269,29 +253,38 @@ for f in www/*; do gzip -9 -n -c "$f" > "$BUILD/$f.gz"; done
 # ---- upload -----------------------------------------------------------------------------
 echo "== uploading"
 MP="$VENV/mpremote connect $PORT"
-$MP exec "import os
-for d in ('www','data','fonts'):
-    try: os.mkdir(d)
-    except OSError: pass
-for f in ('heater.mpy','ui_heater.mpy','aht10.py','app.py','climate.py','bands.py','leds.py','battery.py','power.py','ui_cfg.py','cycle.py','pump.py','mqtt.py','ui_pump.py','ui_mqtt.py','ui_wifi.py','ui_files.py','captive.py','ui_batt.py','ui_sensors.py','ui_sensors_set.py','ui_rgb.py','rgb.py','ui_gsm.py','gsm.py','ui_feat.py','recorder.py','sensors.py','drv_analog.py'):
-    try: os.remove(f)
-    except OSError: pass" >/dev/null
-MODS="app aht10 climate bands leds battery power ui_cfg cycle"
+# frozen modules (custom garden firmware): firmware/frozen.txt; their files must not shadow the frozen copies
+FROZEN_MODS=$(grep -v '^#' ../firmware/frozen.txt | sed 's|.*/||; s|\.py$||' | tr '\n' ' ')
 FROZEN=$($MP exec "try:
     import garden_fw; print('FROZEN', garden_fw.VERSION)
 except ImportError:
     pass" 2>/dev/null | sed -n 's/^FROZEN \([0-9]*\).*/\1/p' | tr -d '\r')
+SKIP=""
 if [[ -n "$FROZEN" ]]; then
-  # custom firmware with the modules built in: remove filesystem copies (they would shadow the frozen ones)
-  echo "   garden firmware $FROZEN: modules are frozen in flash - uploading settings and web files only"
-  $MP exec "import os
-for m in '$MODS'.split():
-    try: os.remove(m + '.mpy')
-    except OSError: pass" >/dev/null
-  $MP cp "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/control.mpy" "$BUILD/control_cfg.mpy" "$BUILD/ui_control.mpy" "$BUILD/ui_control_form.mpy" "$BUILD/sensors.mpy" "$BUILD/sensor_types.mpy" "$BUILD/gsm_cfg.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" "$BUILD/sensor_types.txt" : >/dev/null
-else
-  $MP cp $(for m in $MODS; do echo "$BUILD/$m.mpy"; done) "$BUILD/pump.mpy" "$BUILD/mqtt.mpy" "$BUILD/ui_pump.mpy" "$BUILD/ui_mqtt.mpy" "$BUILD/ui_wifi.mpy" "$BUILD/ui_files.mpy" "$BUILD/captive.mpy" "$BUILD/ui_batt.mpy" "$BUILD/ui_sensors.mpy" "$BUILD/ui_sensors_set.mpy" "$BUILD/ui_rgb.mpy" "$BUILD/rgb.mpy" "$BUILD/ui_gsm.mpy" "$BUILD/gsm.mpy" "$BUILD/ui_feat.mpy" "$BUILD/recorder.mpy" "$BUILD/ui_display.mpy" "$BUILD/display.mpy" "$BUILD/disp_oled.mpy" "$BUILD/disp_tft.mpy" "$BUILD/gfont.mpy" "$BUILD/control.mpy" "$BUILD/control_cfg.mpy" "$BUILD/ui_control.mpy" "$BUILD/ui_control_form.mpy" "$BUILD/sensors.mpy" "$BUILD/sensor_types.mpy" "$BUILD/gsm_cfg.mpy" "$BUILD"/drv_*.mpy "$BUILD/settings.py" "$BUILD/main.py" "$BUILD/sensor_types.txt" : >/dev/null
+  echo "   garden firmware $FROZEN: core modules are frozen in flash - not uploading them"
+  SKIP="$FROZEN_MODS"
 fi
+# board clean-up: modules the previous deploy put there (deployed.txt) that no longer exist in the
+# source, old .py copies of compiled modules, and on a garden firmware file copies of frozen modules.
+# Files the user added by hand are never touched. OLD = names from before deployed.txt existed.
+KEEP=$(cd "$BUILD" && ls *.mpy | sed 's/\.mpy$//' | grep -vxF -f <(tr ' ' '\n' <<<"$SKIP" | grep .) | tr '\n' ' ')
+OLD="heater ui_heater sensor_labels $FROZEN_MODS"
+$MP exec "import os
+for d in ('www', 'data', 'fonts'):
+    try: os.mkdir(d)
+    except OSError: pass
+keep = set('$KEEP'.split())
+try:
+    prev = set(open('deployed.txt').read().split())
+except OSError:
+    prev = set('$OLD'.split()) | keep
+for f in os.listdir():
+    n, _, ext = f.rpartition('.')
+    if (ext == 'mpy' and n in prev and n not in keep) or (ext == 'py' and n in keep):
+        os.remove(f); print('   removed', f)
+open('deployed.txt', 'w').write(' '.join(sorted(keep)))" | grep removed || true
+UP=$(for m in $KEEP; do echo "$BUILD/$m.mpy"; done)
+$MP cp $UP "$BUILD/settings.py" "$BUILD/main.py" "$BUILD/sensor_types.txt" : >/dev/null
 $MP cp "$BUILD"/www/*.gz :www/ >/dev/null
 $MP cp fonts/*.bin :fonts/ >/dev/null          # display fonts (read from flash glyph by glyph)
 if [[ -f wifi.json ]]; then $MP cp wifi.json :wifi.json >/dev/null; echo "   uploaded wifi.json"; fi

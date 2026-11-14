@@ -1,5 +1,6 @@
 # Displays panel (/display, /display/add, /display/del, /display/test) - loaded per request by
 # app.py, then released.
+# Spec: docs/SPEC.md#displays
 import app
 from app import esc
 import time
@@ -27,6 +28,7 @@ SPI_PINS = (('sck', 'SCL / SCK (clock)', False), ('mosi', 'SDA / MOSI (data)', F
 
 
 def _free():
+    """GPIOs free for a display."""
     import sys
     import sensors as R
     try:
@@ -41,7 +43,8 @@ def _free():
 
 
 def frag(msg='', ok=False):
-    from display import load_cfg
+    """Displays panel: configured screens with Test / Remove, add form."""
+    from display_cfg import load_cfg
     c = load_cfg()
     d = app.disp
     names = dict((k, lbl) for k, lbl, _ in TYPES)
@@ -117,6 +120,7 @@ def test(self, k):
 
 
 def _help():
+    """Wiring help text."""
     return ['<p class="muted">OLED (I2C): VCC 3.3 V, GND, SDA to GPIO%d, SCL to GPIO%d - the bus the air sensor uses. '
             'TFT (SPI): VCC 3.3 V, GND, then the pins chosen above; BLK can go to 3.3 V (always on) instead. '
             '1.3&quot; IPS boards with 7 pins and no CS are ST7789 240x240. The big number is the soil moisture; the '
@@ -125,7 +129,8 @@ def _help():
 
 
 def handle(method, path, f):
-    from display import load_cfg, save_cfg
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
+    from display_cfg import load_cfg, save_cfg
     if method == 'GET':
         return frag() if path == '/display' else None
     c = load_cfg()

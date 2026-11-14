@@ -1,6 +1,7 @@
 # Basic WiFi radio test - run over serial (Thonny or mpremote run), not on boot.
 # Starts the 'garden' setup hotspot, scans, tries the saved network, and prints everything,
 # with ESP-IDF WiFi driver logs enabled on the serial console.
+# Spec: docs/SPEC.md#wifi
 import network, time, json
 
 try:

@@ -1,4 +1,5 @@
 # RGB status light panel (/rgb, /rgb/save) - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#status-lights
 import app
 from app import esc
 import settings as S
@@ -24,6 +25,7 @@ def _pins(c):
 
 
 def frag(msg='', ok=False):
+    """RGB light panel: pins, mode, followed sensor, brightness."""
     from rgb import load_cfg
     c = load_cfg()
     r = app.rgb
@@ -59,6 +61,7 @@ def frag(msg='', ok=False):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     from rgb import load_cfg, save_cfg
     if method == 'GET':
         return frag() if path == '/rgb' else None

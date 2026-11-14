@@ -1,4 +1,5 @@
 # Captive-portal DNS for the setup access point - loaded only while the AP is up (app.py), then released.
+# Spec: docs/SPEC.md#wifi
 try:
     import asyncio
 except ImportError:

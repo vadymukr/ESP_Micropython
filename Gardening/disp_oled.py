@@ -1,12 +1,15 @@
 # Monochrome OLED over I2C: SSD1306 (0.96" 128x64, 0.91" 128x32) and SH1106 (1.3" 128x64).
 # Frame buffer in RAM (128x64 = 1 KB), sent with show(). Rotation 0 or 180 (done by the chip).
+# Spec: docs/SPEC.md#displays
 import framebuf
 
 
 class Oled:
+    """SSD1306 / SH1106 OLED driver with a frame buffer (common display driver interface)."""
     color = False
 
     def __init__(self, i2c, w, h, addr=0x3C, sh1106=False, rot=0):
+        """Initialise the controller (w x h, I2C address, SH1106 page mode, rotation 0 / 180)."""
         self.i2c, self.addr, self.w, self.h, self.sh = i2c, addr, w, h, sh1106
         self.pages = h // 8
         self.buf = bytearray(w * self.pages)
@@ -24,15 +27,19 @@ class Oled:
         self.cmd(0xAF)
 
     def cmd(self, c):
+        """Send one command byte."""
         self.i2c.writeto(self.addr, bytes((0x80, c)))
 
     def col(self, name):
+        """Colour value for a name: 0 for 'bg', 1 for anything else."""
         return 0 if name == 'bg' else 1
 
     def fill(self, c):
+        """Fill the frame buffer."""
         self.fb.fill(c)
 
     def fill_rect(self, x, y, w, h, c):
+        """Filled rectangle in the frame buffer."""
         self.fb.fill_rect(x, y, w, h, c)
 
     def draw(self, s, x, y, font=None, fg=1, bg=0):
@@ -51,6 +58,7 @@ class Oled:
         return x - x0
 
     def show(self):
+        """Send the frame buffer to the screen."""
         if self.sh:                                   # SH1106: 132 columns, page by page, offset 2
             w = self.w
             for p in range(self.pages):
@@ -63,8 +71,10 @@ class Oled:
         self.i2c.writevto(self.addr, (b'\x40', self.buf))
 
     def power(self, on):
+        """Display on / off (OLED pixels off = no burn-in)."""
         self.cmd(0xAF if on else 0xAE)
 
     def contrast(self, pct):
+        """Brightness 0-100 %."""
         self.cmd(0x81)
         self.cmd(max(1, min(255, pct * 255 // 100)))

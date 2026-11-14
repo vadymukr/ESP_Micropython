@@ -1,10 +1,12 @@
 # Watering pump panel (/pump, /pump/...) - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#pump
 import app
 from app import esc
 import settings as S
 
 def _log_tail(n=8):
-    from pump import LOG
+    """Last n lines of pump.log."""
+    from pump_cfg import LOG
     try:
         with open(LOG) as f:
             f.seek(0, 2)
@@ -35,6 +37,7 @@ def _enable(on):
 
 
 def frag_pump(msg='', ok=False):
+    """Pump panel: run / stop, mode settings, flow sensor, statistics, log, disable."""
     p = app.pump
     if not p:
         if getattr(S, 'PUMP_PIN', None) is None:
@@ -45,7 +48,7 @@ def frag_pump(msg='', ok=False):
                     'hx-target="#pump">Enable the pump</button> <span class="muted">(the board restarts, about 20 s)</span>'
                     % ('<p class="%s">%s</p>' % ('ok' if ok else 'warn', esc(msg)) if msg else '', S.PUMP_PIN))
         return '<p class="muted">Pump not running (switched off in Features).</p>'
-    from pump import MODES, FLOW_TYPES
+    from pump_cfg import MODES, FLOW_TYPES
     c = p.cfg
     sel = lambda a, b: ' selected' if a == b else ''
     out = ['<p><b>Pump (GPIO %d): %s</b> &middot; today %d of %d s</p>' % (S.PUMP_PIN, p.state_text(), c['day_s'], S.PUMP_DAY_MAX_S)]
@@ -137,6 +140,7 @@ def _stats(p):
 
 
 def pump_post(path, f):
+    """Pump panel actions (run, stop, reset, save, enable / disable)."""
     p = app.pump
     if path == '/pump/enable' and not p:
         import sys
@@ -161,7 +165,7 @@ def pump_post(path, f):
         p.save(enabled=False)
         app.restart_soon()
         return '<p class="ok">Pump disabled. The board restarts to free its RAM - reload the page in about 20 s.</p>'
-    from pump import MODES, parse_times, parse_hours
+    from pump_cfg import MODES, parse_times, parse_hours
     if path == '/pump/run':
         try:
             secs = int(f.get('s', p.cfg['man_s']))
@@ -226,6 +230,7 @@ def pump_post(path, f):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     if method == 'GET':
         return frag_pump() if path == '/pump' else None
     return pump_post(path, f)

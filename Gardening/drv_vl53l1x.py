@@ -2,6 +2,7 @@
 # Init = ST's ultra-lite driver (VL53L1X_ULD): default configuration block 0x2D..0x87, one
 # start/stop cycle, then continuous ranging; a read fetches the newest distance when ready.
 # 0x29 is also the address of VL53L0X and TCS34725: only one of them per bus.
+# Spec: docs/SPEC.md#driver-interface
 import time
 
 CONFIG = bytes((                                              # registers 0x2D .. 0x87 (91 bytes)
@@ -14,7 +15,11 @@ CONFIG = bytes((                                              # registers 0x2D .
 
 
 class Driver:
+    """Registry driver: VL53L1X time-of-flight distance sensor, I2C 0x29 (16-bit registers), up to ~4 m.
+    Interface: docs/SPEC.md#driver-interface."""
     def __init__(self, e, ctx):
+        """Set up from the registry entry e (pins / address / settings); ctx = app.sens (shared I2C bus, free
+        UARTs, air readings)."""
         self.e, self.ctx = e, ctx
         self.a = int(e.get('addr', '29'), 16)
         if self.rd(0x010F, 2) != b'\xEA\xCC':
@@ -40,18 +45,23 @@ class Driver:
         self.last = None
 
     def rd(self, reg, n):
+        """Read n bytes from a 16-bit register address."""
         return self.ctx.i2c.readfrom_mem(self.a, reg, n, addrsize=16)
 
     def wr(self, reg, v):
+        """Write one byte to a 16-bit register address."""
         self.ctx.i2c.writeto_mem(self.a, reg, bytes((v,)), addrsize=16)
 
     def _ready(self):
+        """True when a new measurement is ready (interrupt status vs polarity)."""
         return (self.rd(0x0031, 1)[0] & 0x01) == self.pol
 
     def chans(self):
+        """Channels this sensor reports: [(key, label, unit, decimals)]."""
         return [('mm', self.e['name'], 'mm', 0)]
 
     def read(self):
+        """One value per channel, None where there is no valid reading this time."""
         if self._ready():
             st = self.rd(0x0089, 1)[0] & 0x1F                  # range status (9 = valid)
             b = self.rd(0x0096, 2)
@@ -60,4 +70,5 @@ class Driver:
         return [self.last]
 
     def info(self):
+        """Short status text for the dashboard card (pin / address, raw value or error)."""
         return 'I2C 0x%02X' % self.a

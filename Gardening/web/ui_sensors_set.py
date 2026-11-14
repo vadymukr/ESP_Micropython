@@ -2,6 +2,7 @@
 # app.py, then released. Returns a short message for #smsg; on success the panel reloads itself.
 # Adding, removing or moving a sensor restarts the board (everything is rebuilt from the saved list);
 # names and calibration apply at once.
+# Spec: docs/SPEC.md#sensors
 import json
 import os
 import app
@@ -13,6 +14,7 @@ MAX_SENSORS = 8
 
 
 def bad(msg):
+    """Warning message for the panel."""
     return '<p class="warn">%s</p>' % esc(msg)
 
 
@@ -24,6 +26,7 @@ def done(msg, delay=0):
 
 
 def _num(f, k, lo, hi):
+    """Number field k of form f within lo..hi (ValueError otherwise)."""
     v = float(f.get(k, ''))
     if not lo <= v <= hi:
         raise ValueError(k)
@@ -52,6 +55,7 @@ def _soil_changed(old, new):
 def _mqtt_fields(add=None, drop=None):
     """Keep an explicit MQTT selection in step: new sensors are sent, removed ones dropped."""
     def fix(c):
+        """Adjust one MQTT settings dict."""
         f = c.get('fields') or []
         if not f:
             return                              # empty = everything, nothing to do
@@ -66,6 +70,7 @@ def _mqtt_fields(add=None, drop=None):
 
 
 def _jupdate(path, fn):
+    """Read-modify-write a JSON settings file with fn."""
     try:
         with open(path) as f:
             c = json.load(f)
@@ -78,6 +83,7 @@ def _jupdate(path, fn):
 
 
 def _restart(lst, msg, columns):
+    """Save the list, stop a recording if the CSV columns change, restart the board."""
     import sensors as R
     R.save(lst)
     app.sens.reg = lst                        # further edits before the restart build on this list
@@ -88,6 +94,7 @@ def _restart(lst, msg, columns):
 
 
 def handle(method, path, f):
+    """POST /sensors/save | del | cap | cal | air."""
     import sys
     import sensors as R
     try:
@@ -99,6 +106,7 @@ def handle(method, path, f):
 
 
 def _do(R, path, f):
+    """The sensor list actions (save, remove, capture dry / wet, calibrate, air sensor)."""
     sn = app.sens
     lst = sn.reg
     if path == '/sensors/cap':                  # soil: current raw reading -> dry or wet

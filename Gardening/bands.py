@@ -8,6 +8,7 @@
 # Power-loss safe: settings in DATA_DIR/bands.json (changed from the UI), trend + last watering
 # times in DATA_DIR/trend.json (every 30 min). Both are written to a .tmp file and renamed, so a
 # power cut leaves the old or the new version, never half a file; a bad file -> settings.py defaults.
+# Spec: docs/SPEC.md#watering-bands
 import json
 import os
 import time
@@ -26,6 +27,7 @@ MISSING = -1.0
 
 
 def _save(path, obj):
+    """Write JSON atomically (temp file + rename)."""
     tmp = path + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(obj, f)
@@ -33,6 +35,7 @@ def _save(path, obj):
 
 
 def _load(path):
+    """JSON file contents, or None if missing / unreadable."""
     try:
         with open(path) as f:
             return json.load(f)
@@ -41,7 +44,9 @@ def _load(path):
 
 
 class Bands:
+    """Watering bands per soil sensor: F (full) per sensor, growth stage width w, drying trend."""
     def __init__(self, n, uptime, time_ok):
+        """n soil sensors; uptime / time_ok from the app. Restores bands.json and the trend."""
         self.n, self.up, self.time_ok = n, uptime, time_ok
         self.stage = S.BANDS_STAGE
         self.full = list(S.BANDS_FULL[:n]) + [70] * max(0, n - len(S.BANDS_FULL))   # F per sensor
@@ -77,15 +82,18 @@ class Bands:
 
     # ---------------------------------------------------------------- settings from the UI
     def set(self, stage, full, link=False):
+        """New stage and F values (link = all sensors keep their offset to sensor 1)."""
         self.stage, self.full, self.link = stage, full, link
         self.off = [x - full[0] for x in full]
         _save(CFG, {'stage': stage, 'full': full, 'link': link})
 
     def w(self):
+        """Band width w in points for the current growth stage."""
         return STAGES[self.stage][1]
 
     # ---------------------------------------------------------------- per sample (every ~2 s)
     def update(self, pcts):
+        """Every sample: watering detection, half-hour trend slots, drying rate."""
         now = self.up()
         self.last = pcts
         if not self.loaded and self.slots == 0 and self.time_ok():
@@ -116,6 +124,7 @@ class Bands:
             self._persist()
 
     def _push(self, vals):
+        """Store one half-hour average per sensor in the 24 h ring buffer."""
         for i, v in enumerate(vals):
             self.ring[i][self.head] = v
         self.head = (self.head + 1) % NSLOT
@@ -154,6 +163,7 @@ class Bands:
 
     # ---------------------------------------------------------------- persistence
     def _persist(self):
+        """Save the trend ring (trend.json) with the real time, so it survives a restart."""
         if not self.time_ok():
             return                                # no real time yet: cannot align after a restart
         t = time.time()
@@ -169,6 +179,7 @@ class Bands:
             print('bands: save failed', e)
 
     def _restore(self, now):
+        """Load trend.json once the clock is set, dropping slots older than a day."""
         self.loaded = True
         d = _load(TREND)
         if not d:
@@ -239,6 +250,7 @@ class Bands:
 
     # ---------------------------------------------------------------- evaluation
     def band(self, i, v):
+        """Band key of sensor i at v %: 'wet', 'drain', 'good', 'soon', 'now' or 'dry'."""
         F, w = self.full[i], self.w()
         if v >= F + 5:
             wt = self.watered[i]
@@ -268,6 +280,7 @@ class Bands:
         return txt, not self.rate_ok[i]
 
     def trend_text(self, i):
+        """Drying rate text for the card, e.g. "-6.2 pts/day" (measured or default)."""
         d = self.rate[i] * 24
         if self.rate_ok[i]:
             return '&minus;%.1f pts/day' % d
@@ -275,5 +288,6 @@ class Bands:
 
 
 def _ago(s):
+    """Seconds as "45 min" / "3 h"."""
     s = int(s)
     return '%d min' % (s // 60) if s < 7200 else '%d h' % (s // 3600)

@@ -1,10 +1,12 @@
 # Battery panel (/batt, /batt/...) - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#battery-monitor
 import app
 from app import esc
 import settings as S
 
 
 def frag_batt(msg='', ok=False):
+    """Battery panel: preset, divider suggestion, thresholds, live reading."""
     from battery import load_cfg, PINS, PRESETS, PIN_OK_V, PIN_MAX_V, E12
     c = load_cfg()
     b = app.batt
@@ -69,6 +71,7 @@ def frag_batt(msg='', ok=False):
 
 
 def _handle(method, path, f):
+    """Save the battery settings and apply them."""
     from battery import load_cfg, save_cfg, PINS, PRESETS, PIN_MAX_V
     if method == 'GET':
         return frag_batt() if path == '/batt' else None
@@ -124,6 +127,7 @@ def _handle(method, path, f):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     try:
         return _handle(method, path, f)
     finally:

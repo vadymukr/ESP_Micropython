@@ -1,8 +1,10 @@
 # Generates the Node-RED flow for the garden logger (Dashboard 2.0). Run: python3 make_flow.py OUT.json
+# Spec: docs/SPEC.md#mqtt
 import json, sys
 
 ids = {}
 def nid(name):
+    """A new Node-RED node id."""
     if name not in ids:
         ids[name] = '%016x' % (0x6a7264656e000000 + len(ids) + 1)
     return ids[name]
@@ -10,6 +12,7 @@ def nid(name):
 TAB = nid('tab')
 nodes = []
 def add(key, typ, x=None, y=None, wires=None, **kw):
+    """Append a node to the flow and return it."""
     n = {'id': nid(key), 'type': typ}
     if x is not None:
         n.update(z=TAB, x=x, y=y)
@@ -114,14 +117,17 @@ add('f_state', 'function', 380, 160, [[o] for o in OUTS], name='split state', fu
 SOIL_SEG = [{'from': '0', 'color': '#c63c2c'}, {'from': '45', 'color': '#e0711f'}, {'from': '60', 'color': '#d3a21a'},
             {'from': '70', 'color': '#2f9a58'}, {'from': '90', 'color': '#3d7fc4'}]
 def gauge(name, group, order, title, units, mn, mx, seg, y):
+    """A Dashboard 2.0 gauge widget bound to one value of the state message."""
     add(name, 'ui-gauge', 700, y, [], group=nid(group), order=order, width=3, height=3, gtype='gauge-half',
         gstyle='needle', title=title, units=units, icon='', prefix='', suffix='', segments=seg, min=mn, max=mx,
         sizeThickness=16, sizeGap=4, sizeKeyThickness=8, styleRounded=True, styleGlow=False, className='')
 def text(name, group, order, label, y):
+    """A Dashboard 2.0 text widget."""
     add(name, 'ui-text', 700, y, [], group=nid(group), order=order, width=0, height=0, name=label, label=label,
         format='{{msg.payload}}', layout='col-center', style=False, font='', fontSize=14, color='#1d2420',
         wrapText=True, className='')
 def chart(name, group, order, label, ylabel, ymin, ymax, colors, y):
+    """A Dashboard 2.0 line chart."""
     add(name, 'ui-chart', 700, y, [], group=nid(group), name=label, label=label, order=order, chartType='line',
         category='topic', categoryType='msg', xAxisLabel='', xAxisProperty='', xAxisPropertyType='timestamp',
         xAxisType='time', xAxisFormat='', xAxisFormatType='auto', yAxisLabel=ylabel, yAxisProperty='payload',

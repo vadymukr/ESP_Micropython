@@ -1,10 +1,11 @@
 # WiFi setup fragments (/wifi/...) - loaded per request by app.py, then released.
-import app
+# Spec: docs/SPEC.md#wifi
 from app import esc, uptime, net, dur
 import settings as S
 
 
 def frag_wifi_state():
+    """WiFi setup: connection state and message."""
     n = net
     out = []
     if n.pending:
@@ -32,6 +33,7 @@ def frag_wifi_state():
 
 
 def frag_scan():
+    """Networks found by a scan, strongest first."""
     n = net
     if not n.scan_cache:
         return ('<p class="warn">No networks found.</p><p class="muted">The ESP32 only sees 2.4 GHz networks. '
@@ -48,6 +50,7 @@ def frag_scan():
 
 
 def handle(method, path, q, f):
+    """WiFi setup routes: scan, state, connect, forget."""
     if path == '/wifi/scan':
         if q.get('fresh') or net.scan_at is None or uptime() - net.scan_at > 30:
             net.scan()

@@ -1,4 +1,5 @@
 # 'Latest records' and 'Recordings' fragments - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#recording
 import os
 import app
 from app import esc, kb, rec
@@ -6,6 +7,7 @@ import settings as S
 
 
 def _latest_csv():
+    """The recording to show in Latest records (running one, else the newest file)."""
     if rec.fname:
         return rec.fname
     names = [x for x in os.listdir(S.DATA_DIR) if x.endswith('.csv')]
@@ -13,6 +15,7 @@ def _latest_csv():
 
 
 def frag_tail():
+    """Last rows of the latest recording."""
     name = _latest_csv()
     if not name:
         return '<p class="muted">No recordings yet.</p>'
@@ -51,6 +54,7 @@ def frag_tail():
 
 
 def frag_files():
+    """Recording files with download / delete."""
     names = sorted((x for x in os.listdir(S.DATA_DIR) if x.endswith('.csv')), reverse=True)
     if not names:
         return '<p class="muted">No recordings yet.</p>'
@@ -74,4 +78,5 @@ def frag_files():
 
 
 def files_oob():
+    """Files list as an htmx out-of-band swap (after start / stop)."""
     return '<div id="files" hx-swap-oob="innerHTML">%s</div>' % frag_files()

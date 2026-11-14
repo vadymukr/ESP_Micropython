@@ -1,5 +1,6 @@
 # Controller settings (DATA_DIR/control.json) for the Control panel and control.py: kept apart so the
 # panel can read and save them without loading the controller code.
+# Spec: docs/SPEC.md#controllers
 import json
 import os
 import settings as S
@@ -12,6 +13,7 @@ UP = ('heater', 'light')                   # these raise the reading
 
 
 def defaults(kind):
+    """Default entry for a new controller of kind 'heater' | 'light' | 'fan' (heater from settings HEATER_*)."""
     g = lambda k, d: getattr(S, k, d)
     c = {'id': '', 'name': dict(KINDS)[kind].split(' ')[0], 'kind': kind, 'on': True, 'pin': None, 'inv': False,
          'src': 'air', 'mode': 'pid', 'on_mode': 'pid', 'sp': 25.0, 'hyst': 1.0, 'min_s': 30, 'kp': 20.0, 'ki': 2.0,
@@ -60,6 +62,7 @@ def load_cfg():
 
 
 def save_cfg(c):
+    """Write control.json atomically."""
     tmp = CFG + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(c, f)

@@ -13,95 +13,20 @@
 #                      (same method as the CSV recorder), 'samples' = how many
 #   <base>/pump/event  pump log lines (ON / OFF / check OK / DRY RUN ...) as they happen
 # What goes into <base>/state is chosen with checkboxes on the page ('fields').
+# Spec: docs/SPEC.md#mqtt
 try:
     import asyncio
 except ImportError:
     import uasyncio as asyncio
 import json
-import os
-import time
-import settings as S
 
-CFG = S.DATA_DIR + '/mqtt.json'
-# Template from settings.py (all optional); values saved from the page (mqtt.json) override them.
-DEFAULTS = {'on': getattr(S, 'MQTT_ENABLED', False), 'host': getattr(S, 'MQTT_HOST', ''),
-            'port': getattr(S, 'MQTT_PORT', 1883), 'user': getattr(S, 'MQTT_USER', ''),
-            'pw': getattr(S, 'MQTT_PASSWORD', ''), 'cid': getattr(S, 'MQTT_CLIENT_ID', ''),
-            'base': getattr(S, 'MQTT_TOPIC', 'garden'), 'every': getattr(S, 'MQTT_EVERY_S', 60),
-            'retain': getattr(S, 'MQTT_RETAIN', True), 'fields': list(getattr(S, 'MQTT_FIELDS', ()))}
-FIELDS = ('air', 'pump', 'batt', 'board')       # plus 'sen_<id>' per registry sensor; [] = everything
-
-
-def load_cfg():
-    c = dict(DEFAULTS)
-    try:
-        with open(CFG) as f:
-            d = json.load(f)
-        for k in DEFAULTS:
-            if k in d:
-                c[k] = d[k]
-    except (OSError, ValueError):
-        pass
-    if not c['cid']:
-        import machine
-        c['cid'] = 'garden-' + ''.join('%02x' % b for b in machine.unique_id()[-3:])
-    return c
+from mqtt_cfg import load_cfg, save_cfg
 
 
 def snapshot(avg, fields):
-    """The selected values as a dict for <base>/state (here, not in app.py: only in RAM while MQTT is on).
-    avg = Mqtt.avg(); fields = 'sen_<id>', 'air', 'pump', 'batt', 'board' ([] = everything). An unselected
-    soil sensor is sent as null so the others keep their position in the list."""
-    import gc
-    from app import sens, bands, pump, batt, rec, net, stamp, time_ok, uptime, ctrl
-    from bands import BANDS
-    S_ = S
-    raws, t, rh, hpa, n, gv = avg
-    if raws is None:
-        raws, t, rh, hpa, n, gv = list(sens.raw), sens.t, sens.rh, sens.p, 1, list(sens.gval)
-    allf = not fields                        # empty selection = everything
-    d = {'time': stamp() if time_ok() else None, 'samples': n}
-    ss = []
-    for i, c in enumerate(sens.ch):
-        if not allf and 'sen_' + c[5] not in fields:
-            ss.append(None)
-            continue
-        p = sens.pct(raws[i], c[2], c[3])
-        k = bands.band(i, p)
-        ss.append({'id': c[5], 'name': c[4], 'gpio': c[0], 'raw': round(raws[i], 1), 'pct': round(p, 1), 'band': k,
-                   'band_text': BANDS[k], 'full_F': bands.full[i], 'water_at': bands.full[i] - bands.w(),
-                   'dry_rate_pts_day': round(bands.rate[i] * 24, 1), 'rate_measured': bands.rate_ok[i]})
-    if any(ss):
-        d['soil'] = ss
-    gs = {}
-    for j, g in enumerate(sens.gch):
-        if allf or 'sen_' + g[6] in fields:
-            v = gv[j] if j < len(gv) else None
-            key = g[6] if len([x for x in sens.gch if x[6] == g[6]]) == 1 else g[6] + '.' + g[2]
-            gs[key] = {'name': g[3], 'value': None if v is None else round(v, g[5]), 'unit': g[4].replace('&deg;', '\xb0')}
-    if gs:
-        d['sensors'] = gs
-    if allf or 'air' in fields:
-        d['air'] = {'temp_c': None if t is None else round(t, 2), 'rh_pct': None if rh is None else round(rh, 1),
-                    'hpa': None if hpa is None else round(hpa, 1), 'sensor': sens.clim_name if sens.clim else None}
-    if pump and (allf or 'pump' in fields):
-        c = pump.cfg
-        d['pump'] = {'on': pump.running, 'busy': pump.busy(), 'mode': c['mode'], 'fault': c['fault'] or None,
-                     'today_s': c['day_s'], 'day_max_s': S_.PUMP_DAY_MAX_S, 'tank_empty': pump.tank_empty(),
-                     'runs_today': c['runs_day'], 'today_l': round(c['l_day'], 3), 'total_l': round(c['l_total'], 2),
-                     'flow_lpm': None if pump.lpm is None or not pump.running else round(pump.lpm, 2)}
-    if ctrl and (allf or 'control' in fields or 'heater' in fields):
-        d['control'] = ctrl.mqtt()
-    if batt and (allf or 'batt' in fields):
-        d['battery'] = {'v': None if batt.v is None else round(batt.v, 2), 'state': batt.state}
-    if allf or 'board' in fields:
-        d['uptime_s'] = uptime()
-        d['recording'] = rec.fname if rec.active else None
-        d['wifi_rssi'] = net.sta.status('rssi') if net.sta.isconnected() else None
-        d['heap_free'] = gc.mem_free()
-    return d
-
-
+    """The <base>/state dict (mqtt_snapshot.py, imported per message)."""
+    from mqtt_snapshot import snapshot as f
+    return f(avg, fields)
 
 
 def _resolve(host, port, box):
@@ -113,14 +38,8 @@ def _resolve(host, port, box):
         box.append(e)
 
 
-def save_cfg(c):
-    tmp = CFG + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(c, f)
-    os.rename(tmp, CFG)
-
-
 def _vlen(n):
+    """MQTT remaining-length bytes for n."""
     out = bytearray()
     while True:
         b = n & 0x7F
@@ -131,12 +50,15 @@ def _vlen(n):
 
 
 def _str(s):
+    """MQTT UTF-8 string (2-byte length + bytes)."""
     b = s.encode() if isinstance(s, str) else s
     return bytes((len(b) >> 8, len(b) & 0xFF)) + b
 
 
 class Mqtt:
+    """Minimal non-blocking MQTT 3.1.1 publisher (QoS 0) with averaging since the last message."""
     def __init__(self, uptime):
+        """Settings from mqtt.json; uptime from the app."""
         self.up = uptime
         self.cfg = load_cfg()
         self.r = self.w = None
@@ -158,6 +80,7 @@ class Mqtt:
 
     # ---------------------------------------------------------------- averaging since the last publish
     def _acc_reset(self, n, m):
+        """Clear the running sums (n soil sensors, m registry channels)."""
         self.acc_raw = [0] * n
         self.acc_g = [0.0] * m               # registry sensor channels (sum, count)
         self.acc_gn = [0] * m
@@ -198,6 +121,7 @@ class Mqtt:
                 [a / c if c else None for a, c in zip(self.acc_g, self.acc_gn)])
 
     def save(self, **kw):
+        """Update and save mqtt.json."""
         self.cfg.update(kw)
         save_cfg(self.cfg)
         self.kick = True
@@ -214,6 +138,7 @@ class Mqtt:
             self.next = 0
 
     def topic(self, t):
+        """Full topic <base>/<t>."""
         return self.cfg['base'] + '/' + t
 
     async def _addr(self):
@@ -244,14 +169,17 @@ class Mqtt:
 
     # ---------------------------------------------------------------- protocol
     async def _send(self, pkt):
+        """Write one packet and drain."""
         self.w.write(pkt)
         await asyncio.wait_for(self.w.drain(), 10)
 
     async def _publish(self, topic, payload, retain=False):
+        """PUBLISH a payload (QoS 0, optional retain)."""
         body = _str(topic) + (payload.encode() if isinstance(payload, str) else payload)
         await self._send(bytes((0x31 if retain else 0x30,)) + _vlen(len(body)) + body)
 
     async def _connect(self):
+        """Open TCP (WiFi or GPRS), CONNECT with last will, wait for CONNACK."""
         c = self.cfg
         keep = min(65535, c['every'] * 2 + 60)       # every publish counts as keep-alive traffic
         flags = 0x02 | 0x04 | 0x20                    # clean session, will (retained "offline")
@@ -284,6 +212,7 @@ class Mqtt:
         print('mqtt: connected to %s:%d' % (c['host'], c['port']))
 
     async def _close(self, polite=True):
+        """Close the connection (optionally publishing offline first)."""
         if self.w:
             try:
                 if polite and self.connected:
@@ -301,6 +230,7 @@ class Mqtt:
 
     # ---------------------------------------------------------------- loop
     async def run(self, snapshot_fn, online):
+        """Task: connect when online, publish state every interval and events at once, reconnect with back-off."""
         while True:
             await asyncio.sleep(1)
             c = self.cfg

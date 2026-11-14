@@ -1,0 +1,18 @@
+# Modules frozen into the custom garden firmware (firmware/build.sh, manifest.py) - the always-loaded
+# core. deploy.sh reads this list too: on a garden firmware board it does not upload these modules.
+# One path per line, relative to Gardening/.
+web/app.py
+web/util.py
+web/sampler.py
+web/wifi.py
+web/pages.py
+web/server.py
+web/feats.py
+web/ui_cfg.py
+web/cycle.py
+aht10.py
+climate.py
+bands.py
+leds.py
+battery.py
+power.py

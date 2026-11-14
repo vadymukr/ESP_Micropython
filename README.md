@@ -5,7 +5,8 @@ capacitive soil sensors, tells you when to water, runs a pump with dry-run prote
 everything on a web dashboard served by the board itself. Optional parts: MQTT for Node-RED, a
 GSM modem for SMS, and OLED or TFT screens. Each optional part can be switched off so it takes no RAM.
 
-Everything lives in [`Gardening/`](Gardening/).
+Everything lives in [`Gardening/`](Gardening/); the specification is
+[`Gardening/docs/SPEC.md`](Gardening/docs/SPEC.md).
 
 ## Features
 
@@ -135,15 +136,21 @@ To get more room:
 
 ```
 Gardening/
-  web/                 app.py (web server, dashboard), settings.py, deploy.sh, ui_*.py panels,
-                       www/ (dashboard HTML/JS), fonts/ (display fonts),
-                       sensor_types.txt (sensor types: add a line + a drv_*.py to support a new sensor)
-  *.py                 modules: pump, mqtt, gsm, bands, sensors + drv_* drivers, display, power ...
+  docs/SPEC.md         specification: behaviour, modules, routes, data files, coding standards
+  web/                 the app on the board: main.py, app.py (shared state, start-up), util, sampler,
+                       wifi, pages, server, feats, settings.py, ui_*.py panels, www/ (dashboard),
+                       fonts/, sensor_types.txt, deploy.sh
+  *.py                 features: pump*, mqtt*, gsm*, display*, control*, bands, rgb, leds, battery,
+                       power, recorder, climate, sensors + drv_*.py sensor drivers
+  firmware/            custom MicroPython build with the core frozen in (frozen.txt lists it)
   node-red/            Node-RED Dashboard 2.0 flow (make_flow.py builds the JSON)
-  firmware/            custom MicroPython build with the app frozen in
   tools/make_fonts.py  rebuilds web/fonts/*.bin (needs Pillow)
+  legacy/              the 2020 prototype, kept for reference (not used)
   logs/, soil_moisture_sensor_data_csv/   recorded sample data
 ```
+
+Every module starts with a short description and a link to its section of
+[docs/SPEC.md](Gardening/docs/SPEC.md); every function has a docstring.
 
 ## Plans
 

@@ -1,5 +1,6 @@
 # GSM panel settings (DATA_DIR/gsm.json): kept apart from gsm.py so the panel can read and save them
 # without loading the modem code (~15 KB) while the modem is off.
+# Spec: docs/SPEC.md#gsm
 import json
 import os
 import settings as S
@@ -16,6 +17,7 @@ CALL_ACTIONS = (('off', 'nothing (just hang up)'), ('status', 'reply with the st
 
 
 def load_cfg():
+    """GSM settings (gsm.json over DEFAULTS)."""
     c = dict(DEFAULTS)
     try:
         with open(CFG) as f:
@@ -29,6 +31,7 @@ def load_cfg():
 
 
 def save_cfg(c):
+    """Write gsm.json atomically."""
     tmp = CFG + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(c, f)

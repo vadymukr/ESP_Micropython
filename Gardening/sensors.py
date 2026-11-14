@@ -13,6 +13,7 @@
 # read() -> [value or None per channel], and a short 'info' text. Nothing else in the app changes:
 # every channel automatically gets a dashboard card, an MQTT field and a CSV column.
 # 'soil' is built into app.Sensors (bands, pump and LEDs work with soil sensors).
+# Spec: docs/SPEC.md#sensors
 import json
 import os
 import settings as S
@@ -26,6 +27,7 @@ IO_PINS = getattr(S, 'IO_PINS', (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 
 # line by sensor_types.py in the Sensors panel only, so the pin helpers below stay small.
 
 def _default():
+    """The first sensor list, made from settings.SENSORS (soil sensors)."""
     out = []
     for k, (pin, dry, wet, name) in enumerate(S.SENSORS):
         out.append({'id': 'S%d' % (k + 1), 'type': 'soil', 'name': name, 'pin': pin, 'dry': dry, 'wet': wet})
@@ -78,6 +80,7 @@ def save(lst, air=None):
 
 
 def new_id(lst):
+    """First free sensor id S1, S2, ..."""
     n = 1
     ids = [e['id'] for e in lst]
     while 'S%d' % n in ids:
@@ -150,6 +153,7 @@ def taken_pins(lst, skip_id=None):
 
 
 def free_pins(kind, lst, skip_id=None):
+    """Pins free for a sensor of pin kind ('adc', 'io', 'uart', 'spi'); [] for I2C."""
     if kind == 'i2c':
         return []
     t = taken_pins(lst, skip_id)

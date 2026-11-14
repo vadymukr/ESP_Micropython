@@ -8,6 +8,7 @@
 # Modes: 'on' steady, 'eco' short flash every 5 s (~2 % of the current), 'off'.
 # Wiring: R, G, B pins each through ~220 Ohm to the LED (the KY-016 has resistors on board),
 #         common cathode -> GND (active high) or common anode -> 3V3 (set 'anode').
+# Spec: docs/SPEC.md#status-lights
 try:
     import asyncio
 except ImportError:
@@ -26,6 +27,7 @@ WORST = ('fault', 'dry', 'now', 'wet', 'soon', 'drain', 'good')     # first matc
 
 
 def load_cfg():
+    """RGB light settings (rgb.json over the defaults)."""
     c = dict(DEFAULTS)
     try:
         with open(CFG) as f:
@@ -39,6 +41,7 @@ def load_cfg():
 
 
 def save_cfg(c):
+    """Write rgb.json atomically."""
     tmp = CFG + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(c, f)
@@ -46,7 +49,9 @@ def save_cfg(c):
 
 
 class Rgb:
+    """RGB LED in the colour of the soil band (PWM on three pins)."""
     def __init__(self, c):
+        """Start with settings c (pins set up by reconfig())."""
         self.c, self.pwm = c, []
         self.state = None              # band key shown
         self.reconfig(c)
@@ -75,6 +80,7 @@ class Rgb:
                 break
 
     def _set(self, key):
+        """Show the colour of band key (None = dark) at the set brightness."""
         col = COLOR.get(key, (0, 0, 0))
         b = max(0, min(100, self.c['bright'])) / 100
         for p, v in zip(self.pwm, col):
@@ -82,6 +88,7 @@ class Rgb:
             p.duty(1023 - d if self.c['anode'] else d)
 
     def off(self):
+        """LED dark (before sleep)."""
         self._set(None)
 
     def flash_once(self, key):
@@ -96,6 +103,7 @@ class Rgb:
             time.sleep_ms(150)
 
     async def run(self):
+        """Task: lamp test, then steady / eco / blinking colour of the current state."""
         for k in ('now', 'good', 'wet'):              # lamp test: red, green, blue
             self._set(k)
             await asyncio.sleep_ms(300)

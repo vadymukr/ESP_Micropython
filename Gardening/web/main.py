@@ -2,6 +2,7 @@
 #   - Hold the BOOT button (GPIO0) during an EN reset / power-on to skip the app (REPL only).
 #   - A wake from deep sleep (power.py sleep cycle) never skips: BOOT is also the wake button.
 #     Timer wakes run the quick measure-log-sleep path; anything else starts the full web app.
+# Spec: docs/SPEC.md#architecture
 from machine import Pin, reset_cause, DEEPSLEEP_RESET
 import settings as S
 

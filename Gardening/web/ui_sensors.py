@@ -2,6 +2,7 @@
 # by app.py, then released. Changes are saved by ui_sensors_set.py. The add/edit form holds only the
 # fields of the chosen type (changing the type fetches its form), so the page stays small.
 # Handlers return a list of HTML parts: app.send() streams them without joining (RAM).
+# Spec: docs/SPEC.md#sensors
 import app
 from app import esc
 import settings as S
@@ -104,6 +105,7 @@ def form(R, typ, cur=None):
 
 
 def frag(R, msg=''):
+    """Sensors panel: list with readings, Edit / calibrate / Remove, built-in air sensor, pin summary."""
     from sensor_types import label
     lst = app.sens.reg
     out = ['<div id="smsg">']
@@ -162,6 +164,7 @@ def frag(R, msg=''):
 
 
 def handle(method, path, f):
+    """GET /sensors, /sensors/form?type=..., POST /sensors/edit."""
     import sys
     import sensors as R
     try:

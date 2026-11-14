@@ -8,6 +8,7 @@ gfont.py, so a font costs ~0.5 KB of RAM however big it is.
 File: b'GF', version 1, cell height (u8), glyph count (u16), then per glyph its code (u16 LE),
 width (u8), data offset (u32 LE); then the glyphs, MONO_HLSB rows (bytes per row = (w+7)//8).
 Needs Pillow:  python3 tools/make_fonts.py
+Spec: docs/SPEC.md#displays
 """
 import os
 import struct
@@ -24,6 +25,7 @@ SMALL = (16, 24)
 
 
 def pack(img):
+    """An image as MONO_HLSB rows (bytes per row = (w + 7) // 8)."""
     w, h = img.size
     px = img.load()
     out = bytearray()
@@ -39,6 +41,7 @@ def pack(img):
 
 
 def build(name, chars, cell, size_for):
+    """Render chars into one font file of cell height cell; returns its size in bytes."""
     size, top = size_for(cell)
     f = ImageFont.truetype(FONT, size)
     glyphs = []
@@ -79,6 +82,7 @@ def text_size(cell):
 
 
 def main():
+    """Build all digit and text fonts into web/fonts/."""
     os.makedirs(OUT, exist_ok=True)
     total = 0
     for c in BIG:

@@ -5,6 +5,7 @@
 # clean outdoor air after >= 24 h burn-in: "R0 = now". Readings start 3 min after power-on (heater).
 # Indicative only - NOT a certified gas / CO alarm. MQ-7 is specified with heater cycling; on a
 # constant 5 V module its CO value is rough.
+# Spec: docs/SPEC.md#driver-interface
 import time
 from machine import ADC, Pin
 
@@ -15,7 +16,11 @@ MQ = {'mq2': ('LPG', 574.25, -2.222, 9.83), 'mq4': ('CH4', 1012.7, -2.786, 4.4),
 
 
 class Driver:
+    """Registry driver: MQ-series gas sensors (MQ-2, MQ-4, MQ-6, MQ-7, MQ-9, MQ-135) on the analog outpu.
+    Interface: docs/SPEC.md#driver-interface."""
     def __init__(self, e, ctx=None):
+        """Set up from the registry entry e (pins / address / settings); ctx = app.sens (shared I2C bus, free
+        UARTs, air readings)."""
         self.e = e
         self.m = MQ[e['type']]
         self.adc = ADC(Pin(e['pin']))
@@ -24,10 +29,12 @@ class Driver:
         self.mv = self.rs = None
 
     def chans(self):
+        """Channels this sensor reports: [(key, label, unit, decimals)]."""
         n = self.e['name']
         return [('ppm', '%s %s' % (n, self.m[0]), 'ppm', 0), ('ratio', n + ' Rs/R0', '', 2)]
 
     def read(self):
+        """One value per channel, None where there is no valid reading this time."""
         e = self.e
         s = 0
         for _ in range(16):
@@ -53,6 +60,7 @@ class Driver:
         return 'r0', round(self.rs / self.m[3], 3)
 
     def info(self):
+        """Short status text for the dashboard card (pin / address, raw value or error)."""
         w = time.ticks_diff(time.ticks_ms(), self.t0) < 180000
         return 'GPIO%d &middot; %s mV &middot; Rs %s k&Omega;%s' % (
             self.e['pin'], '-' if self.mv is None else '%d' % self.mv,

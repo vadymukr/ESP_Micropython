@@ -1,4 +1,5 @@
 # Minimal MicroPython driver for the AHT10 temperature / humidity sensor (I2C, addr 0x38)
+# Spec: docs/SPEC.md#sensors
 import time
 
 AHT10_ADDR = 0x38
@@ -8,7 +9,9 @@ _CMD_RESET = b'\xBA'             # soft reset
 
 
 class AHT10:
+    """AHT10 / AHT20 humidity + temperature on the shared I2C bus (built-in air sensor)."""
     def __init__(self, i2c, addr=AHT10_ADDR):
+        """Calibrate / soft-reset the sensor at addr (I2C 0x38)."""
         self.i2c = i2c
         self.addr = addr
         self.i2c.writeto(self.addr, _CMD_RESET)
@@ -18,6 +21,7 @@ class AHT10:
 
     # Non-blocking use (asyncio): trigger(), wait >= 80 ms, then result()
     def trigger(self):
+        """Start a measurement (result ~80 ms later)."""
         self.i2c.writeto(self.addr, _CMD_MEASURE)
 
     def result(self):

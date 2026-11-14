@@ -1,5 +1,6 @@
 # Features panel (/features, /features/save) - loaded per request by app.py, then released.
 # Saves DATA_DIR/features.json and restarts: a feature that is off is never imported (no RAM).
+# Spec: docs/SPEC.md#features
 import json
 import os
 import app
@@ -14,6 +15,7 @@ CFG = S.DATA_DIR + '/features.json'
 
 
 def frag(msg='', ok=False):
+    """Features panel: a checkbox per feature with its RAM cost."""
     import gc
     on = app.FEAT
     out = ['<form class="set" hx-post="/features/save" hx-target="#features">']
@@ -35,6 +37,7 @@ def frag(msg='', ok=False):
 
 
 def _exists():
+    """True if features.json overrides settings.FEATURES."""
     try:
         os.stat(CFG)
         return True
@@ -43,6 +46,8 @@ def _exists():
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None.
+    Saving restarts the board."""
     if method == 'GET':
         return frag() if path == '/features' else None
     if path != '/features/save':

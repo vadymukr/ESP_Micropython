@@ -7,6 +7,7 @@
 #   eco  - short 80 ms flash every 5 s (~2% duty: about 1/50 of the LED current)
 # Battery (if battery.py is enabled): low = all four flash twice every few seconds on top of the
 # normal indication; critical = indication off, only a triple flash every 10 s.
+# Spec: docs/SPEC.md#status-lights
 try:
     import asyncio
 except ImportError:
@@ -22,7 +23,9 @@ CFG = S.DATA_DIR + '/leds.json'
 
 
 class Leds:
+    """4-LED band indicator (fully watered / normal / water soon / water now)."""
     def __init__(self, pins, active_high=True):
+        """Output pins (active high or low); mode from leds.json."""
         self.hi = active_high
         self.p = [Pin(x, Pin.OUT, value=0 if active_high else 1) for x in pins]
         self.mode = S.LED_MODE if S.LED_MODE in MODES else 'on'
@@ -38,6 +41,7 @@ class Leds:
         self.batt = 'ok'           # 'ok' | 'low' | 'crit' (set by the app from battery.py)
 
     def set_mode(self, mode):
+        """Mode 'on' | 'eco' | 'off', saved to leds.json."""
         self.mode = mode
         tmp = CFG + '.tmp'
         with open(tmp, 'w') as f:
@@ -45,6 +49,7 @@ class Leds:
         os.rename(tmp, CFG)
 
     def show(self, band):
+        """Show the band of the followed sensor (applied by run())."""
         self.level = LEVEL.get(band)
         self.blink = band == 'dry'
 
@@ -70,6 +75,7 @@ class Leds:
             p.value((idx == -1 or k == idx) == self.hi)
 
     async def _flash(self, idx, times, on_ms, off_ms=150):
+        """Blink LED idx times (on_ms / off_ms)."""
         for _ in range(times):
             self._set(idx)
             await asyncio.sleep_ms(on_ms)
@@ -77,6 +83,7 @@ class Leds:
             await asyncio.sleep_ms(off_ms)
 
     async def run(self):
+        """Task: steady light, eco flashes, low-battery blink."""
         for k in range(len(self.p)):                    # lamp test at boot
             self._set(k)
             await asyncio.sleep_ms(250)

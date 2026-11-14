@@ -1,11 +1,13 @@
 # Sensor types for the Sensors panel: read from sensor_types.txt (one JSON line per type) line by line,
 # so the table takes almost no RAM however many types there are. Edit the .txt to add a type.
+# Spec: docs/SPEC.md#sensors
 import json
 
 FILE = 'sensor_types.txt'
 
 
 def _lines():
+    """The JSON lines of sensor_types.txt (comments skipped), one at a time."""
     with open(FILE) as f:
         for ln in f:
             if ln.startswith('['):

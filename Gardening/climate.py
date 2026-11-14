@@ -7,6 +7,7 @@
 #
 # Non-blocking use (asyncio): trigger(), wait >= 80 ms, then result() -> (temp_C, rh_pct|None, hpa|None).
 # result() raises OSError if a sensor is still busy or has gone away.
+# Spec: docs/SPEC.md#sensors
 import time
 import struct
 
@@ -16,6 +17,7 @@ class Si70xx:
     MODELS = {0x0D: 'Si7013', 0x14: 'Si7020', 0x15: 'Si7021', 0x32: 'HTU21D'}
 
     def __init__(self, i2c, addr=0x40):
+        """Si7020 / Si7021 / HTU21 at I2C 0x40 (no-hold measurements)."""
         self.i2c, self.addr = i2c, addr
         i2c.writeto(addr, b'\xFE')               # soft reset
         time.sleep_ms(20)
@@ -26,9 +28,11 @@ class Si70xx:
             self.name = 'HTU21D'                 # HTU21D has no electronic-ID command
 
     def trigger(self):
+        """Start the humidity measurement (temperature is read from it afterwards)."""
         self.i2c.writeto(self.addr, b'\xF5')     # measure RH, no hold master (~12-16 ms)
 
     def result(self):
+        """(temperature degC, relative humidity %) of the last trigger()."""
         b = self.i2c.readfrom(self.addr, 3)      # NACK -> OSError while still converting
         rh = ((b[0] << 8 | b[1]) & 0xFFFC) * 125 / 65536 - 6
         try:
@@ -43,7 +47,9 @@ class Si70xx:
 
 
 class BMP280:
+    """Bosch BMP280 / BME280 pressure + temperature (humidity of a BME280 is not used here)."""
     def __init__(self, i2c, addr=0x76):
+        """Read the calibration and start continuous measurement at addr (0x76 / 0x77)."""
         self.i2c, self.addr = i2c, addr
         if i2c.readfrom_mem(addr, 0xD0, 1)[0] != 0x58:
             raise OSError('not a BMP280')
@@ -55,9 +61,11 @@ class BMP280:
 
     def trigger(self):
         # forced mode, temperature x2, pressure x16 oversampling (~43 ms)
+        """Nothing to start (continuous mode)."""
         self.i2c.writeto_mem(self.addr, 0xF4, b'\x55')
 
     def result(self):
+        """(temperature degC, pressure hPa), compensated with the chip calibration."""
         i2c, a = self.i2c, self.addr
         if i2c.readfrom_mem(a, 0xF3, 1)[0] & 0x08:
             raise OSError('BMP280 busy')
@@ -82,16 +90,20 @@ class BMP280:
 
 
 class Climate:
+    """The detected air sensor: a humidity chip and / or a barometer, read together."""
     def __init__(self, hum, baro):
+        """hum / baro = sensor objects (either may be None); name for the dashboard."""
         self.hum, self.baro = hum, baro
         self.name = ' + '.join(s.name for s in (hum, baro) if s)
 
     def trigger(self):
+        """Start the measurements of both chips."""
         for s in (self.hum, self.baro):
             if s:
                 s.trigger()
 
     def result(self):
+        """(temperature, humidity, pressure); humidity chip temperature preferred."""
         t = rh = p = None
         if self.baro:
             t, p = self.baro.result()

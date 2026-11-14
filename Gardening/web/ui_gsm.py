@@ -1,4 +1,5 @@
 # GSM panel (/gsm, /gsm/save, /gsm/test) - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#gsm
 import app
 from app import esc
 import settings as S
@@ -7,6 +8,7 @@ PHONE_OK = '+0123456789, '
 
 
 def frag(msg='', ok=False):
+    """GSM panel: status, numbers, alerts, call action, keywords, GPRS, log."""
     from gsm_cfg import load_cfg, CALL_ACTIONS
     c = load_cfg()
     g = app.gsm
@@ -56,7 +58,7 @@ def frag(msg='', ok=False):
     if g and g.net and c['phones']:
         out.append('<p><button class="small" hx-post="/gsm/test" hx-target="#gsm">Send test SMS</button></p>')
     if g and g.log:
-        from gsm import ICON
+        from gsm_view import ICON
         out.append('<p style="font-size:13px"><b>Last messages and calls</b><br>')
         for t, kind, n, what, res in reversed(g.log):
             out.append('%s %s %s &middot; %s%s<br>' % (t, ICON.get(kind, ''), '..' + esc(n) if n != 'all' else 'to all',
@@ -75,6 +77,7 @@ def frag(msg='', ok=False):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     from gsm_cfg import load_cfg, save_cfg
     if method == 'GET':
         return frag() if path == '/gsm' else None

@@ -1,4 +1,5 @@
 # MQTT panel (/mqtt, /mqtt/...) - loaded per request by app.py, then released.
+# Spec: docs/SPEC.md#mqtt
 import app
 from app import esc
 import settings as S
@@ -11,7 +12,7 @@ def _cfg():
     if app.mqtt:
         return app.mqtt.cfg
     import sys
-    from mqtt import load_cfg
+    from mqtt_cfg import load_cfg
     c = load_cfg()
     del sys.modules['mqtt']
     return c
@@ -32,6 +33,7 @@ def _fields(c):
 
 
 def frag_mqtt(msg='', ok=False):
+    """MQTT panel: broker, topics, interval, data selection, status."""
     m = app.mqtt
     c = _cfg()
     # status line kept current by the 5-s /status poll (Alpine: mqs / mqt in index.html)
@@ -67,6 +69,7 @@ def frag_mqtt(msg='', ok=False):
 
 
 def mqtt_post(path, f):
+    """Save / send-now / test actions of the MQTT panel."""
     if path == '/mqtt/now':
         if app.mqtt:
             app.mqtt.next = 0
@@ -121,6 +124,7 @@ def mqtt_post(path, f):
 
 
 def handle(method, path, f):
+    """Route entry for app/server.py: GET shows the panel, POST saves; returns HTML (str / list) or None."""
     if method == 'GET':
         return frag_mqtt() if path == '/mqtt' else None
     return mqtt_post(path, f)

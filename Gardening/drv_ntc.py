@@ -4,21 +4,27 @@
 # Calibration: reading = (Beta temperature) * gain + offset. The calibrate button sets the offset so
 # the reading equals the reference temperature typed in 'ref' (blank = the air sensor right now).
 # Pin range: keep the divider output below ~2.5 V (11 dB attenuation is accurate up to ~2.45 V).
+# Spec: docs/SPEC.md#driver-interface
 import math
 from machine import ADC, Pin
 
 
 class Driver:
+    """Registry driver: NTC thermistor driver (e.g. 10k B3950 probe). Interface: docs/SPEC.md#driver-interface."""
     def __init__(self, e, ctx=None):
+        """Set up from the registry entry e (pins / address / settings); ctx = app.sens (shared I2C bus, free
+        UARTs, air readings)."""
         self.e, self.ctx = e, ctx
         self.adc = ADC(Pin(e['pin']))
         self.adc.atten(ADC.ATTN_11DB)
         self.mv = self.r = self.raw_t = None
 
     def chans(self):
+        """Channels this sensor reports: [(key, label, unit, decimals)]."""
         return [('t', self.e['name'], '&deg;C', int(self.e.get('dec', 1)))]
 
     def read(self):
+        """One value per channel, None where there is no valid reading this time."""
         e = self.e
         s = 0
         for _ in range(16):
@@ -40,9 +46,11 @@ class Driver:
         return [self.raw_t * e.get('gain', 1.0) + e.get('offset', 0.0)]
 
     def cal(self):
+        """Calibrate button of the Sensors panel: returns (key, value) to store in the entry."""
         return cal_offset(self.e, self.raw_t, self.ctx)
 
     def info(self):
+        """Short status text for the dashboard card (pin / address, raw value or error)."""
         return 'GPIO%d &middot; %s mV &middot; %s' % (
             self.e['pin'], '-' if self.mv is None else '%d' % self.mv,
             'probe open / short' if self.r is None else '%.2f k&Omega;' % self.r)

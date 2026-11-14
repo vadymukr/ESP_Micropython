@@ -1,4 +1,5 @@
 # Settings for the garden moisture logger web app (ESP32 WROOM, MicroPython 1.29)
+# Spec: docs/SPEC.md#architecture
 
 # Features this board uses (default; the dashboard Features panel overrides it, /data/features.json).
 # A feature left out is never imported: its code takes no RAM and its panel is hidden.

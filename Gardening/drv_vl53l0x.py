@@ -2,6 +2,7 @@
 # Init follows Pololu's VL53L0X library (ST API sequence): SPAD setup, default tuning, reference
 # calibration, then continuous back-to-back ranging; a read just fetches the newest result.
 # 0x29 is also the address of VL53L1X and TCS34725: only one of them per bus.
+# Spec: docs/SPEC.md#driver-interface
 import time
 
 # default tuning settings (register, value), 0xFF = page select
@@ -19,7 +20,11 @@ TUNING = bytes((
 
 
 class Driver:
+    """Registry driver: VL53L0X time-of-flight distance sensor (GY-530, GY-VL53L0XV2), I2C 0x29, up to ~.
+    Interface: docs/SPEC.md#driver-interface."""
     def __init__(self, e, ctx):
+        """Set up from the registry entry e (pins / address / settings); ctx = app.sens (shared I2C bus, free
+        UARTs, air readings)."""
         self.e, self.ctx = e, ctx
         self.a = int(e.get('addr', '29'), 16)
         if self.r(0xC0) != 0xEE:
@@ -57,16 +62,20 @@ class Driver:
         self.last = None
 
     def w(self, reg, v):
+        """Write one 8-bit register."""
         self.ctx.i2c.writeto_mem(self.a, reg, bytes((v,)))
 
     def r(self, reg):
+        """Read one 8-bit register."""
         return self.ctx.i2c.readfrom_mem(self.a, reg, 1)[0]
 
     def _seq(self, pairs):
+        """Write a flat (register, value, register, value, ...) sequence."""
         for i in range(0, len(pairs), 2):
             self.w(pairs[i], pairs[i + 1])
 
     def _wait(self, fn, ms=200):
+        """Poll fn() until true; OSError after ms milliseconds."""
         t = time.ticks_ms()
         while not fn():
             if time.ticks_diff(time.ticks_ms(), t) > ms:
@@ -74,6 +83,7 @@ class Driver:
             time.sleep_ms(2)
 
     def _spad_info(self):
+        """Read the SPAD count / type from the sensor NVM (ST reference init)."""
         w, r = self.w, self.r
         self._seq((0x80, 1, 0xFF, 1, 0x00, 0, 0xFF, 6))
         w(0x83, r(0x83) | 0x04)
@@ -87,15 +97,18 @@ class Driver:
         return t & 0x7F, (t >> 7) & 1
 
     def _ref_cal(self, vhv):
+        """One reference calibration step (VHV or phase), as in the ST API."""
         self.w(0x00, 0x01 | vhv)
         self._wait(lambda: self.r(0x13) & 0x07)
         self.w(0x0B, 0x01)
         self.w(0x00, 0x00)
 
     def chans(self):
+        """Channels this sensor reports: [(key, label, unit, decimals)]."""
         return [('mm', self.e['name'], 'mm', 0)]
 
     def read(self):
+        """One value per channel, None where there is no valid reading this time."""
         if self.r(0x13) & 0x07:                               # new result ready
             b = self.ctx.i2c.readfrom_mem(self.a, 0x14 + 10, 2)
             d = (b[0] << 8) | b[1]
@@ -104,4 +117,5 @@ class Driver:
         return [self.last]
 
     def info(self):
+        """Short status text for the dashboard card (pin / address, raw value or error)."""
         return 'I2C 0x%02X' % self.a
